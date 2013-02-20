@@ -15,7 +15,7 @@
                           :subprotocol "sqlite"
                           :subname "db/fsupdate.db"})
 
-(def ^:dynamic *nindexers* 1)
+(def ^:dynamic *nindexers* 4)
 
 (def query-ch (channel 5000))
 (def delete-ch (channel 5000))
@@ -66,13 +66,10 @@
   [recordset]
   (apply jdbc/insert-records :files recordset))
 
-;; LEFT OFF: I think we need to conver the char in the dbrec to a string in the code => the db looks like it is returning a string, not a Char 
-
 (defn dbquery
   "dirpath: abs-path to a directory
   must be called within a with-connection wrapper"
   [{:keys [dirpath reply-ch]}]
-  (print (str ">>>> reply-ch" reply-ch "<<<\n"))
   (put reply-ch
        (if-let [origdir-rt (jdbc/with-query-results res
                              ["SELECT path, type FROM files WHERE path = ?" dirpath]
@@ -102,10 +99,6 @@
           had no records of this directory and its files
   @return: vector pair: [set of records only on the fs, set of records only in the db]"
   [fs-recs db-recs]
-  ;; DEBUG
-  ;; (println fs-recs)
-  ;; (println db-recs)
-  ;; END DEBUG
   (if db-recs
     (let [fs-set (set fs-recs)
           db-set (set db-recs)]
@@ -119,11 +112,6 @@
   (let [reply-ch (channel)
         _        (put query-ch {:dirpath topdir :reply-ch reply-ch})
         db-recs  (take reply-ch)
-        ;; DEBUG
-        _        (if db-recs
-                   (prf (str "!!!---> db-recs " (second db-recs) " <----!!!!\n"))
-                   (prf (str "!!!---> db-recs " db-recs " <----!!!!\n")))
-        ;; end DEBUG
         fs-recs  (cons {:path topdir :type "d"} (map #(array-map :path % :type "f") files))
         [fsonly dbonly]  (partition-results fs-recs db-recs)]
     (put insert-ch fsonly)
@@ -143,6 +131,7 @@
   "coll/seq of dirs (as strings) to index with the fslocate db"
   [search-dirs]
   (loop [dirs search-dirs]
+    (prf "Doing" (first dirs))
     (if-not (seq dirs)
       (.countDown latch)
       (let [[files subdirs] (->> (first dirs)
