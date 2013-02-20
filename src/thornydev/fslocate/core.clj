@@ -6,7 +6,8 @@
             [clojure.java.io :as io]
             [clojure.set :refer [difference]]
             [thornydev.go-lightly.core :refer :all])
-  (:import (java.util.concurrent CountDownLatch)))
+  (:import (java.util.concurrent CountDownLatch))
+  (:gen-class))
 
 ;; TODO: once working, replace "file fns" with the https://github.com/Raynes/fs library
 
@@ -14,7 +15,7 @@
                           :subprotocol "sqlite"
                           :subname "db/fsupdate.db"})
 
-(def ^:dynamic *nindexers* 2)
+(def ^:dynamic *nindexers* 1)
 
 (def query-ch (channel 5000))
 (def delete-ch (channel 5000))
@@ -53,19 +54,6 @@
 
 ;; ---[ database fns ]--- ;;
 
-;; (defn fetch [query]
-;;   (jdbc/with-connection *db-spec*
-;;     (jdbc/with-query-results res query
-;;       (doall res))))
-
-
-;; (defn in-db? [fname]
-;;   (not= 0 (->> fname
-;;                (vector "SELECT count(*) as cnt FROM files WHERE path = ?")
-;;                fetch
-;;                first
-;;                :cnt)))
-
 (defn dbdelete
   "fname: string of full path for file/dir"
   [recordset]
@@ -78,19 +66,22 @@
   [recordset]
   (apply jdbc/insert-records :files recordset))
 
+;; LEFT OFF: I think we need to conver the char in the dbrec to a string in the code => the db looks like it is returning a string, not a Char 
+
 (defn dbquery
   "dirpath: abs-path to a directory
   must be called within a with-connection wrapper"
   [{:keys [dirpath reply-ch]}]
+  (print (str ">>>> reply-ch" reply-ch "<<<\n"))
   (put reply-ch
        (if-let [origdir-rt (jdbc/with-query-results res
-                             ["SELECT path FROM files WHERE path = ?" dirpath]
+                             ["SELECT path, type FROM files WHERE path = ?" dirpath]
                              (doall res))]
          (flatten
           (cons origdir-rt
                 (jdbc/with-query-results res
-                  ["SELECT path FROM files WHERE type = ? AND path LIKE ? AND path NOT LIKE ?"
-                   \f (str dirpath "/%") (str dirpath "/%/%")]
+                  ["SELECT path, type FROM files WHERE type = ? AND path LIKE ? AND path NOT LIKE ?"
+                   "f" (str dirpath "/%") (str dirpath "/%/%")]
                   (doall res))))
          false)))
 
@@ -104,56 +95,36 @@
                (timeout-channel 2000) #(identity %))
       (recur))))
 
-
-;; (defn partition-bifurcate [f coll]
-;;   (reduce (fn [[vecyes vecno] value]
-;;             (if (f value)
-;;               [(conj vecyes value) vecno]
-;;               [vecyes (conj vecno  value)])) [[] []] coll))
-
-;; LEFT OFF: needs to change
-;; needs to go through each subdir returning all files and all dirs (as separate seqs)
-;; in a given directory
-;; the files will be queried in one query and get back one or more records confirming whether
-;;  they are in the db or not
-;; if not, they will be queued up for insertion
-;; if yes, then ignore (move on)
-;; could also add in logic to diff the lists from the fs and the db
-;;   -> delete those in the db, not on the fs
-;;   -> insert those in the fs, not in the db
-;; (defn indexer [dirs update-ch]
-;;   (apply prf "List to search:" dirs)
-;;   (doseq [sdir dirs]
-;;     (let [fdir (io/file sdir)]
-;;       (doseq [f (file-seq fdir) :let [fname (.getAbsolutePath f)]]
-;;         (when-not (in-db? fname)
-;;           (put update-ch fname)
-;;           (prf "just queued: " fname)))))
-;;   (.countDown latch))
-
 (defn partition-results
   "records should be of form: {:path /usr/local/bin, :type d}
   fs-recs: seq of file system records
-  dbrecs: seq of records from db query
+  dbrecs: EITHER: seq of records from db query, OR: a boolean false (meaning the database
+          had no records of this directory and its files
   @return: vector pair: [set of records only on the fs, set of records only in the db]"
   [fs-recs db-recs]
-  (let [fs-set (set fs-recs)
-        db-set (set db-recs)]
-    [(difference fs-set db-set) (difference db-set fs-set)]))
+  ;; DEBUG
+  ;; (println fs-recs)
+  ;; (println db-recs)
+  ;; END DEBUG
+  (if db-recs
+    (let [fs-set (set fs-recs)
+          db-set (set db-recs)]
+      [(difference fs-set db-set) (difference db-set fs-set)])
+    [(set fs-recs) #{}]))
 
 (defn sync-list-with-db
   "topdir: (string): directory holding the +files+
   files: (seq/coll of strings): files to sync with the db"
   [topdir files]
-  ;; TODO: compare f/d status of each fs entry
-  ;; STEP 1: query for all files in db under topdir
-  ;; STEP 2: make two sets: 1) on fs, not in db; 2) in db, not on fs;
-  ;; STEP 3: insert from db those in #1
-  ;; STEP 4: delete from db those in #2
   (let [reply-ch (channel)
         _        (put query-ch {:dirpath topdir :reply-ch reply-ch})
         db-recs  (take reply-ch)
-        fs-recs  (cons {:path topdir :type \d} (map #(array-map :path % :type \f) files))
+        ;; DEBUG
+        _        (if db-recs
+                   (prf (str "!!!---> db-recs " (second db-recs) " <----!!!!\n"))
+                   (prf (str "!!!---> db-recs " db-recs " <----!!!!\n")))
+        ;; end DEBUG
+        fs-recs  (cons {:path topdir :type "d"} (map #(array-map :path % :type "f") files))
         [fsonly dbonly]  (partition-results fs-recs db-recs)]
     (put insert-ch fsonly)
     (put delete-ch dbonly)))
@@ -178,17 +149,17 @@
                                  list-dir
                                  (partition-bifurcate file?))]
         (sync-list-with-db (first dirs) files)
-        (recur (conj (rest dirs) subdirs))))))
+        (recur (concat (rest dirs) subdirs))))))
 
 (defn -main [& args]
   (let [vdirs (read-conf)
         parts (vec (partition-all (/ (count vdirs) *nindexers*) vdirs))]
     (gox (dbhandler))
     (doseq [p parts]
-      (gox (indexer2 (vec p))))
-    ;; (gox (dbupdater))
+      (gox (indexer (vec p))))
     )
   (.await latch)
-  (Thread/sleep 1000)
+  (Thread/sleep 500)
   (stop)
+  (shutdown)
   )
