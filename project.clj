@@ -6,5 +6,6 @@
   :dependencies [[org.clojure/clojure "1.5.0-RC16"]
                  [org.clojure/java.jdbc "0.1.1"]
                  [org.xerial/sqlite-jdbc "3.7.2"]
+                 [postgresql/postgresql "9.1-901-1.jdbc4"]
                  [thornydev/go-lightly "0.3.2"]]
-  :main thornydev.fslocate.core)
+  :main thornydev.fslocate)
