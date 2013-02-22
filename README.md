@@ -8,8 +8,26 @@ It runs in the background and runs until it finishes.  It should be run via a cr
 
 ## Requirements
 
-fslocate keeps all indexed data in a sqlite database.  It requires SQLite3 to be installed. The database is stored in db/fslocate.db.
+*Note*: this is probably not something you will want to install. First, it is totally uncessary on any Unix/Linus with locate and updatedb and there are probably better options for Windows.  To use what I've got here, you'll need to have:
 
+* Java 6 or 7
+* Clojure 1.5
+* PostgreSQL 9 or SQLite 3
+* Go
+
+An insanely heavyweight requirement for this type of thing.  I wrote to use on my Windows machine, to explore Go concurrency in Clojure (using my go-lightly library), and get some experience with using Go with a database.
+
+fslocate keeps all indexed data in a SQLite or a PostgreSQL database.  Thus, it requires SQLite3 or PostgreSQL 9 to be installed.
+
+*Note*: right now I don't have a Go client that can access a SQLite db.  Once I figure out how to use the SQLite drivers for Go, I'll add that.
+
+#### SQLite
+
+The database is stored in db/fslocate.db.  You will need to create the table and index in `db/sqlite.ddl`.
+
+#### PostgreSQL
+
+You will need to create an fslocate database and then create the table and index in `db/postgres.ddl`.
 
 ## Usage
 

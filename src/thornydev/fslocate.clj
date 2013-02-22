@@ -43,6 +43,13 @@
 
 (def ^:dynamic *db-spec* postgres-spec)
 
+;; TODO: use the verbose flag reading from cmd line flag
+(def ^:dynamic *verbose?* false)
+
+;; TODO: if this is set to a number higher than the number of
+;; entries in the conf file, the program will not finish since
+;; that many count down latch notches will be marked and never
+;; make it to zero => FIX
 (def ^:dynamic *nindexers* 2)
 
 (def query-ch (channel 5000))
@@ -57,7 +64,10 @@
 (def latch (CountDownLatch. *nindexers*))
 
 (defn read-conf []
-  (str/split-lines (slurp "conf/fslocate.conf")))
+  ;; (mapv #(str/replace % #"/\s*$" "") (str/split-lines (slurp "conf/fslocate.conf")))
+  (->> (slurp "conf/fslocate.conf")
+       (str/split-lines)
+       (mapv #(str/replace % #"/\s*$" ""))))
 
 ;; ---[ database fns ]--- ;;
 
@@ -65,7 +75,8 @@
   "fname: string of full path for file/dir"
   [recordset]
   (doseq [r recordset]
-    (jdbc/delete-rows :files ["PATH = ? and TYPE = ?" (:path r) (:type r)])))
+    (jdbc/delete-rows :files ["lower(PATH) = ? and TYPE = ?"
+                              (str/lower-case (:path r)) (:type r)])))
 
 (defn dbinsert
   "recordset: set of records of form: {:type f|d :path abs-path}
@@ -84,8 +95,8 @@
          (flatten
           (cons origdir-rt
                 (jdbc/with-query-results res
-                  ["SELECT path, type FROM files WHERE type = ? AND path LIKE ? AND path NOT LIKE ?"
-                   "f" (str dirpath "/%") (str dirpath "/%/%")]
+                  ["SELECT path, type FROM files WHERE type = ? AND lower(path) LIKE ? AND lower(path) NOT LIKE ?"
+                   "f" (str/lower-case (str dirpath "/%")) (str/lower-case (str dirpath "/%/%"))]
                   (doall res))))
          false)))
 

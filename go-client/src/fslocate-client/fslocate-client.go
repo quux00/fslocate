@@ -1,34 +1,34 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	_ "github.com/bmizerany/pq"
 	"os"
-    _ "github.com/bmizerany/pq"
-    "database/sql"
+	"strings"
 )
 
 func main() {
-	if (len(os.Args) != 2) {
+	if len(os.Args) != 2 {
 		fmt.Println("ERROR: must provide search string on cmd line")
+		return
 	}
 
-	// db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=sakila sslmode=disable")
-    db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
-    if (err != nil) {
+	db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
+	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer db.Close()
-	
-	// st, err := db.Prepare("select first_name, last_name from actor where first_name like '%" + os.Args[1] + "%'")
-	st, err := db.Prepare("select path from files where path like '%" + os.Args[1] + "%'")
-    if (err != nil) {
+
+	st, err := db.Prepare("select path from files where lower(path) like '%" + strings.ToLower(os.Args[1]) + "%'")
+	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
 	r, err := st.Query()
-    if (err != nil) {
+	if err != nil {
 		fmt.Println(err)
 		return
 	}
