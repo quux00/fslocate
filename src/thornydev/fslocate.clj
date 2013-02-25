@@ -17,7 +17,7 @@
 ;;   - 1 or more go-lightly routines - specified in the *nindexers* global var
 ;;  2. a db handler thread that listens for incoming database execution requests
 ;;   - it listents to three go-lightly channels: query-ch, delete-ch and insert-ch
-;; 
+;;
 ;; indexer thread -> one or more
 ;;  reads conf file to start on fs
 ;;  grabs all files from that dir and queries db to get all recorded files from that dir
@@ -43,28 +43,25 @@
 
 (def ^:dynamic *db-spec* postgres-spec)
 
-;; TODO: use the verbose flag reading from cmd line flag
 (def ^:dynamic *verbose?* false)
 
-;; TODO: if this is set to a number higher than the number of
-;; entries in the conf file, the program will not finish since
-;; that many count down latch notches will be marked and never
-;; make it to zero => FIX
-(def ^:dynamic *nindexers* 2)
+(def ^:dynamic *nindexers* 3)
 
-(def query-ch (channel 5000))
-(def delete-ch (channel 5000))
-(def insert-ch (channel 5000))
+(def query-ch  (channel 1000))
+(def delete-ch (channel 1000))
+(def insert-ch (channel 1000))
 
 (defn prf [& vals]
-  (let [s (apply str (interpose " " (map #(if (nil? %) "nil" %) vals)))]
-    (print (str s "\n")) (flush)
-    s))
+  (when *verbose?*
+    (let [s (apply str (interpose " " (map #(if (nil? %) "nil" %) vals)))]
+      (print (str s "\n")) (flush)
+      s)))
 
-(def latch (CountDownLatch. *nindexers*))
+;; use a delay here so that it is not evaluated until the dynamic *nindexers*
+;; value is set
+(def latch (delay (CountDownLatch. *nindexers*)))
 
 (defn read-conf []
-  ;; (mapv #(str/replace % #"/\s*$" "") (str/split-lines (slurp "conf/fslocate.conf")))
   (->> (slurp "conf/fslocate.conf")
        (str/split-lines)
        (mapv #(str/replace % #"/\s*$" ""))))
@@ -74,6 +71,7 @@
 (defn dbdelete
   "fname: string of full path for file/dir"
   [recordset]
+  (prf "Deleting" recordset)
   (doseq [r recordset]
     (jdbc/delete-rows :files ["lower(PATH) = ? and TYPE = ?"
                               (str/lower-case (:path r)) (:type r)])))
@@ -82,6 +80,7 @@
   "recordset: set of records of form: {:type f|d :path abs-path}
   must be called within a with-connection wrapper"
   [recordset]
+  (prf "Inserting" recordset)
   (apply jdbc/insert-records :files recordset))
 
 (defn dbquery
@@ -102,7 +101,6 @@
 
 (defn dbhandler []
   (jdbc/with-connection *db-spec*
-    ;; TODO: need an atom to check state against for sleeping/pausing/shutting down
     (loop []
       (selectf query-ch  #(dbquery %)
                insert-ch #(dbinsert %)
@@ -132,8 +130,9 @@
         db-recs  (take reply-ch)
         fs-recs  (cons {:path topdir :type "d"} (map #(array-map :path % :type "f") files))
         [fsonly dbonly]  (partition-results fs-recs db-recs)]
-    (put insert-ch fsonly)
-    (put delete-ch dbonly)))
+    ;; if there is something to insert or delete, put it on the right channel
+    (when (seq fsonly) (put insert-ch fsonly))
+    (when (seq dbonly) (put delete-ch dbonly))))
 
 (defn list-dir
   "List files and directories under path."
@@ -151,22 +150,58 @@
   (loop [dirs search-dirs]
     (prf "Doing" (first dirs))
     (if-not (seq dirs)
-      (.countDown latch)
+      (do (prf "before countDown: latch count: " (.getCount @latch)) (.countDown @latch))
       (let [[files subdirs] (->> (first dirs)
                                  list-dir
                                  (partition-bifurcate file?))]
         (sync-list-with-db (first dirs) files)
         (recur (concat (rest dirs) subdirs))))))
 
-(defn -main [& args]
-  (let [vdirs (read-conf)
-        parts (vec (partition-all (/ (count vdirs) *nindexers*) vdirs))]
-    (gox (dbhandler))
-    (doseq [p parts]
-      (gox (indexer (vec p))))
-    )
-  (.await latch)
-  (Thread/sleep 500)
-  (stop)
-  (shutdown)
-  )
+(defn seq-contains? [coll key]
+  (boolean (some #{key} coll)))
+
+(defn calc-num-indexers
+  "argv: command line arguments from user
+  vdirs: vector of all the directories to index (from fslocate.conf)"
+  [argv vdirs]
+  (let [n (if (seq-contains? argv "-t")
+            (get argv (inc (.indexOf argv "-t")))
+            (max 3 (Math/ceil (/ (count vdirs) 2.0))))]
+    (if (or (nil? n)
+            (zero? (Integer/valueOf n)))
+      (throw (IllegalStateException. "ERROR: Unable to determine how many threads to run."))
+      (Integer/valueOf n))))
+
+(defn do-fslocate-indexing
+  "Executes the primary functionality of the indexing app"
+  [argv]
+  (let [vdirs (read-conf)]
+    (binding [*verbose?* (seq-contains? argv "-v")
+              *nindexers* (calc-num-indexers argv vdirs)]
+      (println "Using " *nindexers* " indexing threads")
+      (gox (dbhandler))
+      (prf "count vdirs: " (count vdirs))
+      (prf "math: " (/ (count vdirs) (double *nindexers*)))
+      ;; TODO: this doesn't work -> I need a (partition-into-n *nindexers* vdirs)
+      (prf "parts: " (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs)))
+      (doseq [part (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs))]
+        (gox (indexer (vec part))))
+      (.await @latch)
+      (Thread/sleep 500)
+      (shutdown))))
+
+(defn show-help []
+  (println "fslocate indexer takes three command line args:")
+  (println "  -t NUM: number of indexing threads")
+  (println "  -v    : verbose mode")
+  (println "  :h    : this help screen"))
+
+(defn -main
+  "Args supported:
+  -t NUM : number of indexing threads
+  -v     :  verbose
+  :h     :  show help"
+  [& args]
+  (if (seq-contains? args ":h")
+    (show-help)
+    (do-fslocate-indexing (vec args))))
