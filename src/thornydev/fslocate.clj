@@ -51,12 +51,11 @@
 (def delete-ch (channel 1000))
 (def insert-ch (channel 1000))
 
-;; TODO: this should be a macro that doesn't do anything if when *verbose?* is false
-(defn prf [& vals]
-  (when *verbose?*
-    (let [s (apply str (interpose " " (map #(if (nil? %) "nil" %) vals)))]
-      (print (str s "\n")) (flush)
-      s)))
+(defmacro log [& vals]
+  `(when *verbose?*
+     (let [s# (apply str (interpose " " (map #(if (nil? %) "nil" %) [~@vals])))]
+      (print (str s# "\n")) (flush)
+      s#)))
 
 ;; use a delay here so that it is not evaluated until the dynamic *nindexers*
 ;; value is set
@@ -72,7 +71,7 @@
 (defn dbdelete
   "fname: string of full path for file/dir"
   [recordset]
-  (prf "Deleting" recordset)
+  (log "Deleting" recordset)
   (doseq [r recordset]
     (jdbc/delete-rows :files ["lower(PATH) = ? and TYPE = ?"
                               (str/lower-case (:path r)) (:type r)])))
@@ -81,7 +80,7 @@
   "recordset: set of records of form: {:type f|d :path abs-path}
   must be called within a with-connection wrapper"
   [recordset]
-  (prf "Inserting" recordset)
+  (log "Inserting" recordset)
   (apply jdbc/insert-records :files recordset))
 
 (defn dbquery
@@ -165,13 +164,12 @@
   "coll/seq of dirs (as strings) to index with the fslocate db"
   [search-dirs]
   (loop [dirs search-dirs]
-    (prf "Doing" (first dirs))
+    (log "Doing" (first dirs))
     (if-not (seq dirs)
-      (do (prf "before countDown: latch count: " (.getCount @latch))
+      (do (log "before countDown: latch count: " (.getCount @latch))
           (.countDown @latch))
       (if (skip-dir? (first dirs))
         (recur (rest dirs))
-        ;; TODO: put this in its own fn
         (let [[files subdirs] (->> (first dirs)
                                    list-dir
                                    (partition-bifurcate file?))]
@@ -201,10 +199,10 @@
               *nindexers* (calc-num-indexers argv vdirs)]
       (println "Using " *nindexers* " indexing threads")
       (gox (dbhandler))
-      (prf "count vdirs: " (count vdirs))
-      (prf "math: " (/ (count vdirs) (double *nindexers*)))
+      (log "count vdirs: " (count vdirs))
+      (log "math: " (/ (count vdirs) (double *nindexers*)))
       ;; TODO: this doesn't work -> I need a (partition-into-n *nindexers* vdirs)
-      (prf "parts: " (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs)))
+      (log "parts: " (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs)))
       (doseq [part (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs))]
         (gox (indexer (vec part))))
       (.await @latch)
