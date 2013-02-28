@@ -38,7 +38,7 @@
 (def postgres-spec {:classname "org.postgresql.Driver"
                     :subprotocol "postgresql"
                     :subname "//localhost/fslocate"
-                    :username "midpeter444"
+                    :user "midpeter444"
                     :password "jiffylube"})
 
 (def ^:dynamic *db-spec* postgres-spec)
@@ -51,6 +51,7 @@
 (def delete-ch (channel 1000))
 (def insert-ch (channel 1000))
 
+;; TODO: this should be a macro that doesn't do anything if when *verbose?* is false
 (defn prf [& vals]
   (when *verbose?*
     (let [s (apply str (interpose " " (map #(if (nil? %) "nil" %) vals)))]
@@ -121,6 +122,16 @@
       [(difference fs-set db-set) (difference db-set fs-set)])
     [(set fs-recs) #{}]))
 
+(defn create-file-records
+  "files: (seq/coll of strings): files to sync with the db
+  filters out files that meet a do-not-index criterion and
+  returns file records of form {:path /path/to/file :type f}"
+  [files]
+  (->> files
+       (filter #(not (re-find #"\.class$" %)))
+       (map #(array-map :path % :type "f")))
+  )
+
 (defn sync-list-with-db
   "topdir: (string): directory holding the +files+
   files: (seq/coll of strings): files to sync with the db"
@@ -128,7 +139,7 @@
   (let [reply-ch (channel)
         _        (put query-ch {:dirpath topdir :reply-ch reply-ch})
         db-recs  (take reply-ch)
-        fs-recs  (cons {:path topdir :type "d"} (map #(array-map :path % :type "f") files))
+        fs-recs  (cons {:path topdir :type "d"} (create-file-records files))
         [fsonly dbonly]  (partition-results fs-recs db-recs)]
     ;; if there is something to insert or delete, put it on the right channel
     (when (seq fsonly) (put insert-ch fsonly))
@@ -144,18 +155,28 @@
   [path]
   (.isFile (io/file path)))
 
+(defn skip-dir?
+  "dir: String name of directory
+  @return: true if should NOT index this (on the exclusion list)"
+  [dir]
+  (boolean (re-find #"\.git|\.svn" dir)))
+
 (defn indexer
   "coll/seq of dirs (as strings) to index with the fslocate db"
   [search-dirs]
   (loop [dirs search-dirs]
     (prf "Doing" (first dirs))
     (if-not (seq dirs)
-      (do (prf "before countDown: latch count: " (.getCount @latch)) (.countDown @latch))
-      (let [[files subdirs] (->> (first dirs)
-                                 list-dir
-                                 (partition-bifurcate file?))]
-        (sync-list-with-db (first dirs) files)
-        (recur (concat (rest dirs) subdirs))))))
+      (do (prf "before countDown: latch count: " (.getCount @latch))
+          (.countDown @latch))
+      (if (skip-dir? (first dirs))
+        (recur (rest dirs))
+        ;; TODO: put this in its own fn
+        (let [[files subdirs] (->> (first dirs)
+                                   list-dir
+                                   (partition-bifurcate file?))]
+          (sync-list-with-db (first dirs) files)
+          (recur (concat (rest dirs) subdirs)))))))
 
 (defn seq-contains? [coll key]
   (boolean (some #{key} coll)))
