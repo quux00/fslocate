@@ -45,7 +45,9 @@
 
 (def ^:dynamic *verbose?* false)
 
-(def ^:dynamic *nindexers* 3)
+(def ^:dynamic *nindexers* 2)
+
+(def ^:dynamic *file-ignore-patterns* [".class"])
 
 (def query-ch  (channel 1000))
 (def delete-ch (channel 1000))
@@ -121,13 +123,17 @@
       [(difference fs-set db-set) (difference db-set fs-set)])
     [(set fs-recs) #{}]))
 
+
+(defn ignore-file? [fname]
+  (re-find #"\.class$" fname))
+
 (defn create-file-records
   "files: (seq/coll of strings): files to sync with the db
   filters out files that meet a do-not-index criterion and
   returns file records of form {:path /path/to/file :type f}"
   [files]
   (->> files
-       (filter #(not (re-find #"\.class$" %)))
+       (filter #(not (ignore-file? %)))
        (map #(array-map :path % :type "f")))
   )
 
@@ -191,12 +197,23 @@
       (throw (IllegalStateException. "ERROR: Unable to determine how many threads to run."))
       (Integer/valueOf n))))
 
+(defn lookup-file-ignore-patterns []
+  (if (.exists (File. "conf/fslocate.ignore"))
+    (->> (slurp "conf/fslocate.ignore")
+         (str/split-lines)
+         (filter #(not (re-matches #"^\s*$" %)))
+         (mapv #(str/replace % #"/\s*$" "")))
+    *file-ignore-patterns*
+    )
+  )
+
 (defn do-fslocate-indexing
   "Executes the primary functionality of the indexing app"
   [argv]
   (let [vdirs (read-conf)]
     (binding [*verbose?* (seq-contains? argv "-v")
-              *nindexers* (calc-num-indexers argv vdirs)]
+              *nindexers* (calc-num-indexers argv vdirs)
+              *file-ignore-patterns* (lookup-file-ignore-patterns)]
       (println "Using " *nindexers* " indexing threads")
       (gox (dbhandler))
       (log "count vdirs: " (count vdirs))
