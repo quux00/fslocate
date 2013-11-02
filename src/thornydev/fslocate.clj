@@ -216,10 +216,12 @@
               *file-ignore-patterns* (lookup-file-ignore-patterns)]
       (println "Using " *nindexers* " indexing threads")
       (gox (dbhandler))
+
       (log "count vdirs: " (count vdirs))
       (log "math: " (/ (count vdirs) (double *nindexers*)))
       ;; TODO: this doesn't work -> I need a (partition-into-n *nindexers* vdirs)
       (log "parts: " (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs)))
+
       (doseq [part (vec (partition-all (/ (count vdirs) (double *nindexers*)) vdirs))]
         (gox (indexer (vec part))))
       (.await @latch)
