@@ -3,7 +3,7 @@ package main
 
 import (
 	"bufio"
-	_ "database/sql"
+	"database/sql"
 	"fmt"
 	_ "github.com/bmizerany/pq"
 	"io/ioutil"
@@ -16,6 +16,12 @@ import (
 
 var verbose bool
 var nindexers int
+var db *sql.DB  // safe for concurrent use by multiple goroutines
+
+const (
+	DIR_TYPE  = "d"
+	FILE_TYPE = "f"
+)
 
 // Index needs to be documented
 func Index(args []string) {
@@ -24,7 +30,6 @@ func Index(args []string) {
 
 	var ignorePatterns StringSet = readInIgnorePatterns()
 	var indexDirs []string = readInIndexDirs()
-	_ = indexDirs  // TEMP
 
 	// DEBUG
 	// fmt.Printf("nindexers: %v\n", nindexers)
@@ -33,6 +38,15 @@ func Index(args []string) {
 	fmt.Printf("%v\n", indexDirs)
 	// END DEBUG
 
+	err := initDb()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Cannot established connection to fslocate db: %v\n", err)
+		return
+	}
+	// TODO: where does this go? -> some shutdown/quit notifcation when the goroutines all finish
+	defer db.Close()
+
+	// TODO: what is this for?
 	dbHandler()  // TODO: call as own goroutine
 
 	// TODO: put this in a goroutine
@@ -40,6 +54,16 @@ func Index(args []string) {
 	doIndex(indexDirs, ignorePatterns)
 }
 
+
+func initDb() error {
+	// TODO: need to parameterize
+	var err error
+	db, err = sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 // filter removes all pathNames where the basename (filepath.Base)
 // matches an "ignore" pattern in the ignorePatterns StringSet
@@ -56,9 +80,140 @@ func filter(pathNames []string, ignorePatterns StringSet) []string {
 	return keepers
 }
 
-func syncWithDatabase(pathNames []string) {
-	// TODO: implement
+func syncWithDatabase(fileNames []string, dirNames []string) {
+	filesToInsert, dirsToInsert, err := findEntriesNotInDb(fileNames, dirNames)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+		return
+	}
+	insertIntoDb(filesToInsert, FILE_TYPE)
+	insertIntoDb(dirsToInsert, DIR_TYPE)
+	deleteFromDb() // TODO: how will this work?
+}
+
+func findEntriesNotInDb(filePaths []string, dirPaths []string) (filesToInsert []string, dirsToInsert []string, err error) {
+	var (
+		stmt *sql.Stmt
+		count int
+	)
+	filesToInsert = make([]string, 0, len(filePaths))
+	dirsToInsert  = make([]string, 0, len(dirPaths))
+
+	stmt, err = db.Prepare("SELECT count(path) FROM files WHERE path = $1")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: unable to prepare stmt for db query in indexer: %v\n", err)
+		return
+	}
+	defer stmt.Close()
+
+	// TODO: make this its own function => local anon fn?
+	for _, path := range filePaths {
+		err = stmt.QueryRow(path).Scan(&count)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: unable to query db in indexer: %v\n", err)
+			return
+		}
+		if count == 0 {
+			filesToInsert = append(filesToInsert, path)
+		}
+	}
+	
+	for _, path := range dirPaths {
+		err = stmt.QueryRow(path).Scan(&count)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: unable to query db in indexer: %v\n", err)
+			return
+		}
+		if count == 0 {
+			dirsToInsert = append(dirsToInsert, path)
+		}
+	}
+	
+	return filesToInsert, dirsToInsert, err
+}
+
+func insertIntoDb(pathsToInsert []string, entryType string) error {
+	var (
+		stmt *sql.Stmt
+		res sql.Result
+		err error
+	)
+
+	stmt, err = db.Prepare("INSERT INTO files(path, type) values($1, $2)")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: unable to prepare insert stmt: %v\n", err)
+		return err
+	}
+
+	for _, path := range pathsToInsert {
+		prf("Inserting: %v\n", path)
+		
+		res, err = stmt.Exec(path, entryType)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: unable to insert: %v\n", err)
+			return err
+		}
+		rowCnt, err := res.RowsAffected()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: error checking rows affected: %v\n", err)
+			return err
+		}
+		if rowCnt != 1 {
+			return fmt.Errorf("Number of rows affected was not 1. Was: %d", rowCnt);
+		}
+	}
+	
+	return nil
+}
+
+func deleteFromDb() {
+	// TODO: impl
+}
+
+func syncWithDatabase2(pathNames []string) {
+	// TODO: future impl should match clj version: push onto delete channel, insert channel or query channel
+
+	// for now doing all in line
 	fmt.Printf("Would now syncWithDatabase: %v\n", pathNames)
+
+	// TMP: just do query and insert for now => TODO: deal with deletes later
+
+	var stmt *sql.Stmt
+	var err error
+
+	// TODO: should we also pull the type => what if a filename changed into a dirname or vice versa?
+	//       both have to match
+	// LEFT OFF: no, disagree with the above => just need to know whether it is there => count(*) may be better query
+	stmt, err = db.Prepare("select count(path) from files where path = $1")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: unable to prepare stmt for db query in indexer: %v\n", err)
+		return
+	}
+	defer stmt.Close()
+
+	
+	// var rows *sql.Rows
+	
+	for _, path := range pathNames {
+		var count int
+		err = stmt.QueryRow(path).Scan(&count)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: unable to query database db query in indexer: %v\n", err)
+			return
+		}
+		// DEBUG
+		fmt.Printf(">>>========\n Database output %v\n<<<<===========\n", count)
+		// END DEBUG
+		
+		// for rows.Next() {
+		// 	var rt string
+		// 	rows.Scan(&rt)
+		// }
+		// rows.Close()
+	}
+
+	// LEFT OFF
+	
 }
 
 // scanDir looks at all the entries in the specified directory.
@@ -91,7 +246,7 @@ func doIndex(indexDirs []string, ignorePatterns StringSet) {
 	for _, dir := range filter(indexDirs, ignorePatterns) {
 		prf("Searching: %v\n", dir)
 		files, subdirs := scanDir(dir)
-		syncWithDatabase(filter(files, ignorePatterns))
+		syncWithDatabase( filter(files, ignorePatterns), filter(subdirs, ignorePatterns) )
 		doIndex(subdirs, ignorePatterns)
 	}
 }

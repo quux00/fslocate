@@ -20,7 +20,8 @@ func Search(term string) {
 		fmt.Println(err)
 		return
 	}
-
+	defer st.Close()
+	
 	r, err := st.Query()
 	if err != nil {
 		fmt.Println(err)
