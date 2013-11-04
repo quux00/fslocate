@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"fslocate/stringset"
 )
 
 var verbose bool
@@ -28,14 +29,14 @@ func Index(args []string) {
 	parseArgs(args)
 	prf("Using %v indexers", nindexers)
 
-	var ignorePatterns StringSet = readInIgnorePatterns()
-	var indexDirs []string = readInIndexDirs()
+	var ignorePatterns stringset.StringSet = readInIgnorePatterns()
+	var topIndexDirs []string = readInTopLevelIndexDirs()
 
 	// DEBUG
 	// fmt.Printf("nindexers: %v\n", nindexers)
 	// prf("%T: %v\n", args, args)
 	fmt.Printf("%v\n", ignorePatterns)
-	fmt.Printf("%v\n", indexDirs)
+	fmt.Printf("%v\n", topIndexDirs)
 	// END DEBUG
 
 	err := initDb()
@@ -49,14 +50,14 @@ func Index(args []string) {
 	// TODO: what is this for?
 	dbHandler()  // TODO: call as own goroutine
 
+	processTopLevelEntries(topIndexDirs)
+	
 	// TODO: put this in a goroutine
-	// TODO: split up the indexDirs into nindexers equal sized pieces
-	doIndex(indexDirs, ignorePatterns)
+	// TODO: split up the topIndexDirs into nindexers equal sized pieces
+	doIndex(topIndexDirs, ignorePatterns)
 }
 
-
 func initDb() error {
-	// TODO: need to parameterize
 	var err error
 	db, err = sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
 	if err != nil {
@@ -65,11 +66,103 @@ func initDb() error {
 	return nil
 }
 
+func processTopLevelEntries(confIndexDirs []string) error {
+	var (
+		err error
+		dbIndexDirs, delPaths []string
+	)
+
+	dbIndexDirs, err = lookUpTopLevelDirsInDb()
+	if err != nil {
+		return err
+	}
+	prf("DB-Index-Dirs: %v\n", dbIndexDirs)
+
+	delPaths, err = determinePathsToDeleteInDb(confIndexDirs, dbIndexDirs)
+	if err != nil {
+		return err
+	}
+
+	// TODO: need to delete delPaths from the db
+	
+	return nil
+}
+
+
+// the purpose of this is to determine what to delete from
+// the database table
+func determinePathsToDeleteInDb(confIndexDirs, dbIndexDirs) []string {
+	var (
+		inDbOnly []string
+		parentPaths []string
+		delPaths []string
+	)
+
+	inDbOnly = filterOutExactMatches(confDirs, dbDirs)
+	
+	// left off
+	for _, dbdir := range inDbOnly {
+		for _, confDir := range confDir {
+			// example
+			// confdir = /usr/lib/hadoop
+			// dbdir   = /usr/lib
+			if strings.HasPrefix(confdir, dbdir) {
+				parentPaths = append()
+			} else if ! strings.HasPrefix(dbdir, confdir) {
+				
+			}
+		}
+	}
+	
+	return newPaths, childPaths, parentPaths, err
+}
+
+func filterOutExactMatches(confDirs, dbDirs []string) (inConfOnly, inDbOnly []string) {
+	inConfOnly = make([]string, 0, len(confDirs))
+	inDbOnly   = make([]string, 0, len(dbDirs))
+
+	confDirSet := stringset.New(confDirs...)
+
+	for _, dbdir := range dbDirs {
+		if confDirSet.Contains(dbdir) {
+			inDbOnly = append(inDbOnly, dbdir)
+		}
+	}
+	return inDbOnly
+}
+
+func lookUpTopLevelDirsInDb() (dbIndexDirs []string, err error) {
+	var (
+		stmt *sql.Stmt
+		rows *sql.Rows
+	)
+
+	stmt, err = db.Prepare("SELECT path FROM files WHERE toplevel = true")
+	if err != nil {
+		return
+	}
+	defer stmt.Close()
+
+	rows, err = stmt.Query()
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		rows.Scan(&path)
+		dbIndexDirs = append(dbIndexDirs, path)
+	}
+
+	return dbIndexDirs, nil
+}
+
 // filter removes all pathNames where the basename (filepath.Base)
 // matches an "ignore" pattern in the ignorePatterns StringSet
 // create and returns a new []string; it does not modify the pathNames
 // slice passed in
-func filter(pathNames []string, ignorePatterns StringSet) []string {
+func filter(pathNames []string, ignorePatterns stringset.StringSet) []string {
 	keepers := make([]string, 0, len(pathNames))
 	for _, path := range pathNames {
 		basepath := filepath.Base(path)
@@ -80,7 +173,7 @@ func filter(pathNames []string, ignorePatterns StringSet) []string {
 	return keepers
 }
 
-func syncWithDatabase(fileNames []string, dirNames []string) {
+func syncWithDatabase(fileNames, dirNames []string) {
 	filesToInsert, dirsToInsert, err := findEntriesNotInDb(fileNames, dirNames)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
@@ -91,43 +184,36 @@ func syncWithDatabase(fileNames []string, dirNames []string) {
 	deleteFromDb() // TODO: how will this work?
 }
 
-func findEntriesNotInDb(filePaths []string, dirPaths []string) (filesToInsert []string, dirsToInsert []string, err error) {
+func findEntriesNotInDb(filePaths, dirPaths []string) (filesToInsert, dirsToInsert []string, err error) {
 	var (
 		stmt *sql.Stmt
 		count int
 	)
-	filesToInsert = make([]string, 0, len(filePaths))
-	dirsToInsert  = make([]string, 0, len(dirPaths))
 
 	stmt, err = db.Prepare("SELECT count(path) FROM files WHERE path = $1")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: unable to prepare stmt for db query in indexer: %v\n", err)
-		return
-	}
+	if err != nil { return }
 	defer stmt.Close()
 
-	// TODO: make this its own function => local anon fn?
-	for _, path := range filePaths {
-		err = stmt.QueryRow(path).Scan(&count)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: unable to query db in indexer: %v\n", err)
-			return
+	f := func(pathNames []string) (pathsToInsert []string, err error) {		
+		pathsToInsert = make([]string, 0, len(pathsToInsert))
+		
+		for _, path := range pathNames {
+			err = stmt.QueryRow(path).Scan(&count)
+			if err != nil {
+				return pathsToInsert, err
+			}
+			if count == 0 {
+				pathsToInsert = append(pathsToInsert, path)
+			}
 		}
-		if count == 0 {
-			filesToInsert = append(filesToInsert, path)
-		}
+		return pathsToInsert, nil
 	}
+
+	filesToInsert, err = f(filePaths)
+	if err != nil { return }
 	
-	for _, path := range dirPaths {
-		err = stmt.QueryRow(path).Scan(&count)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: unable to query db in indexer: %v\n", err)
-			return
-		}
-		if count == 0 {
-			dirsToInsert = append(dirsToInsert, path)
-		}
-	}
+	dirsToInsert, err  = f(dirPaths)
+	if err != nil { return }
 	
 	return filesToInsert, dirsToInsert, err
 }
@@ -170,56 +256,10 @@ func deleteFromDb() {
 	// TODO: impl
 }
 
-func syncWithDatabase2(pathNames []string) {
-	// TODO: future impl should match clj version: push onto delete channel, insert channel or query channel
-
-	// for now doing all in line
-	fmt.Printf("Would now syncWithDatabase: %v\n", pathNames)
-
-	// TMP: just do query and insert for now => TODO: deal with deletes later
-
-	var stmt *sql.Stmt
-	var err error
-
-	// TODO: should we also pull the type => what if a filename changed into a dirname or vice versa?
-	//       both have to match
-	// LEFT OFF: no, disagree with the above => just need to know whether it is there => count(*) may be better query
-	stmt, err = db.Prepare("select count(path) from files where path = $1")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: unable to prepare stmt for db query in indexer: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
-	
-	// var rows *sql.Rows
-	
-	for _, path := range pathNames {
-		var count int
-		err = stmt.QueryRow(path).Scan(&count)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: unable to query database db query in indexer: %v\n", err)
-			return
-		}
-		// DEBUG
-		fmt.Printf(">>>========\n Database output %v\n<<<<===========\n", count)
-		// END DEBUG
-		
-		// for rows.Next() {
-		// 	var rt string
-		// 	rows.Scan(&rt)
-		// }
-		// rows.Close()
-	}
-
-	// LEFT OFF
-	
-}
-
 // scanDir looks at all the entries in the specified directory.
 // It returns a slice of files (full path) and a slice of subdirs (full path)
 // It does not recurse into subdirectories.
-func scanDir(dirpath string) (files []string, subdirs []string) {
+func scanDir(dirpath string) (files, subdirs []string) {
 	var finfolist []os.FileInfo
 	var err error
 
@@ -242,22 +282,23 @@ func scanDir(dirpath string) (files []string, subdirs []string) {
 
 // doIndex is the main logic controller for the indexing
 // >>> MORE HERE <<<
-func doIndex(indexDirs []string, ignorePatterns StringSet) {
+func doIndex(indexDirs []string, ignorePatterns stringset.StringSet) {
 	for _, dir := range filter(indexDirs, ignorePatterns) {
 		prf("Searching: %v\n", dir)
 		files, subdirs := scanDir(dir)
+		
 		syncWithDatabase( filter(files, ignorePatterns), filter(subdirs, ignorePatterns) )
 		doIndex(subdirs, ignorePatterns)
 	}
 }
 
-// readInIndexDirs reads in from the fslocate config file that lists
+// readInTopLevelIndexDirs reads in from the fslocate config file that lists
 // all the root directories to search and index.  It returns a list of
 // strings - each a path to search.  The config file is assumed to have
 // one path entry per line.
 // If the config file cannot be found or read, a warning is printed to STDERR
 // and an empty string slice is returned
-func readInIndexDirs() []string {
+func readInTopLevelIndexDirs() []string {
 	indexDirsPath := "conf/fslocate.indexlist"
 	indexDirs := make([]string, 0)
 
@@ -299,9 +340,9 @@ func fileExists(fpath string) bool {
 	return err == nil
 }
 
-func readInIgnorePatterns() StringSet {
+func readInIgnorePatterns() stringset.StringSet {
 	ignoreFilePath := "conf/fslocate.ignore"
-	ignorePatterns := StringSet{}
+	ignorePatterns := stringset.StringSet{}
 
 	if ! fileExists(ignoreFilePath) {
 		fmt.Fprintf(os.Stderr,
@@ -355,6 +396,8 @@ func parseArgs(args []string) {
 	}
 	if sawDashT && nindexers == 0 {
 		log.Fatalf("ERROR: -t switch has no number of indexers after it: %v\n", args)
+	} else if nindexers == 0 {
+		nindexers = 1
 	}
 }
 

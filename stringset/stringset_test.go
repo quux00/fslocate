@@ -1,9 +1,20 @@
-package main
+package stringset
 
 import (
 	"fmt"
 	"testing"
 )
+
+func TestNewWithStringSlice(t *testing.T) {
+	sslice := []string{"aa", "bb", "cc"}
+	set := New(sslice...)
+	fmt.Printf("%v\n", set)
+
+	if len(set) != 3 { t.Errorf("len: %v", len(set)) }
+	if ! set.Contains("aa") { t.Errorf("%v", set) }
+	if ! set.Contains("bb") { t.Errorf("%v", set) }
+	if ! set.Contains("cc") { t.Errorf("%v", set) }
+}
 
 func TestAdd(t *testing.T) {
 	set := StringSet{}
@@ -135,6 +146,35 @@ func TestStringSetAddAll(t *testing.T) {
 	}
 }
 
+
+func TestAddAllInSlice(t *testing.T) {
+
+	sset := New("11", "22", "33")
+	sslice := []string{"44", "55", "66"}
+
+	if len(sset) != 3 {
+		t.Errorf("len: %v", len(sset))
+	}
+	if len(sslice) != 3 {
+		t.Errorf("len: %v", len(sslice))
+	}
+
+	sset = sset.AddAllInSlice(sslice)
+	if len(sset) != 6 {
+		t.Errorf("len: %v", len(sset))
+	}
+	if len(sslice) != 3 {
+		t.Errorf("len: %v", len(sslice))
+	}
+
+	if ! sset.Contains("22") {
+		t.Errorf("len: %v", len(sset))
+	}
+	if ! sset.Contains("66") {
+		t.Errorf("len: %v", len(sset))
+	}
+}
+
 func TestStringSetRemove(t *testing.T) {
 
 	set := StringSet{}
@@ -225,6 +265,4 @@ func TestIsSubset(t *testing.T) {
 	if set1.IsSubset(set4) {
 		t.Errorf("set1: %v; set4: %v", set1, set4)
 	}
-
-	fmt.Printf("%v: %s\n", set1, set2)
 }

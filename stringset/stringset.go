@@ -1,7 +1,8 @@
-// TODO: put in own subpackage
-package main
+package stringset
 
-import "bytes"
+import (
+	"bytes"
+)
 
 type StringSet map[string]bool
 
@@ -21,6 +22,31 @@ func (set StringSet) AddAll(sst StringSet) StringSet {
 		set[k] = true
 	}
 	return set
+}
+
+// AddAll adds all entries in the string slice (ssl) to the set.
+// Returns the called object with the newly added entries
+// in order to allow call chaining. It is safe to ignore the
+// return value if desired.
+func (set StringSet) AddAllInSlice(ssl []string) StringSet {
+	for _, str := range ssl {
+		set[str] = true
+	}
+	return set
+}
+
+func New(args ...string) StringSet {
+	sset := StringSet{}
+	for _, s := range args {
+		sset.Add(s)
+	}
+	return sset
+}
+
+
+func (set StringSet) Difference(set2 StringSet) {
+	diffSet := make(StringSet, 0, max(len(set), len(set2)))
+	// LEFT OFF: need to do difference
 }
 
 // IsSubset returns true if the all values in the set passed in as
@@ -62,3 +88,12 @@ func (set StringSet) String() string {
 	buffer.WriteString("]")
 	return buffer.String()
 }
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+	
