@@ -29,7 +29,7 @@ func Index(args []string) {
 	parseArgs(args)
 	prf("Using %v indexers", nindexers)
 
-	var ignorePatterns stringset.StringSet = readInIgnorePatterns()
+	var ignorePatterns stringset.Set = readInIgnorePatterns()
 	var topIndexDirs []string = readInTopLevelIndexDirs()
 
 	// DEBUG
@@ -64,7 +64,7 @@ func Index(args []string) {
 // doIndex is the main logic controller for the indexing
 // >>> MORE HERE <<<
 // TODO: should this return an error?
-func doIndex(indexDirs []string, ignorePatterns stringset.StringSet) {
+func doIndex(indexDirs []string, ignorePatterns stringset.Set) {
 	var err error
 	for _, dir := range filter(indexDirs, ignorePatterns) {
 		prf("Searching: %v\n", dir)
@@ -132,9 +132,9 @@ func processTopLevelEntries(confIndexDirs []string) error {
 }
 
 // isChildOfAny checks whether path is a child of any of the
-// paths in the paths StringSet.
-// TODO: StringSet should be renamed Set, since you have to say stringset.Set
-func isChildOfAny(paths stringset.StringSet, candidateChild string) bool {
+// paths in the paths Set.
+// TODO: Set should be renamed Set, since you have to say stringset.Set
+func isChildOfAny(paths stringset.Set, candidateChild string) bool {
 	for candidateParent := range paths {
 		if strings.HasPrefix(candidateChild, candidateParent) {
 			return true
@@ -152,7 +152,6 @@ func determineTopLevelPathsToDeleteInDb(confIndexDirs, dbIndexDirs []string) []s
 	dbset := stringset.New(dbIndexDirs...)
 	confset := stringset.New(confIndexDirs...)
 	inDbOnlySet := dbset.Difference(confset)
-	inConfOnlySet := confset.Difference(dbset)
 	delPaths := make([]string, 0)
 
 	for dbdir := range inDbOnlySet {
@@ -198,10 +197,10 @@ func lookUpTopLevelDirsInDb() (dbIndexDirs []string, err error) {
 }
 
 // filter removes all pathNames where the basename (filepath.Base)
-// matches an "ignore" pattern in the ignorePatterns StringSet
+// matches an "ignore" pattern in the ignorePatterns Set
 // create and returns a new []string; it does not modify the pathNames
 // slice passed in
-func filter(pathNames []string, ignorePatterns stringset.StringSet) []string {
+func filter(pathNames []string, ignorePatterns stringset.Set) []string {
 	keepers := make([]string, 0, len(pathNames))
 	for _, path := range pathNames {
 		basepath := filepath.Base(path)
@@ -406,9 +405,9 @@ func fileExists(fpath string) bool {
 	return err == nil
 }
 
-func readInIgnorePatterns() stringset.StringSet {
+func readInIgnorePatterns() stringset.Set {
 	ignoreFilePath := "conf/fslocate.ignore"
-	ignorePatterns := stringset.StringSet{}
+	ignorePatterns := stringset.Set{}
 
 	if ! fileExists(ignoreFilePath) {
 		fmt.Fprintf(os.Stderr,

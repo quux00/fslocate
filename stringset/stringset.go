@@ -4,11 +4,11 @@ import (
 	"bytes"
 )
 
-type StringSet map[string]bool
+type Set map[string]bool
 
-// Note: don't need a pointer to StringSet here bcs it is a
+// Note: don't need a pointer to Set here bcs it is a
 //       map under the hood and map ref
-func (set StringSet) Add(st string) {
+func (set Set) Add(st string) {
 	set[st] = true
 }
 
@@ -17,7 +17,7 @@ func (set StringSet) Add(st string) {
 // Returns the called object with the newly added entries
 // in order to allow call chaining. It is safe to ignore the
 // return value if desired.
-func (set StringSet) AddAll(sst StringSet) StringSet {
+func (set Set) AddAll(sst Set) Set {
 	for k := range sst {
 		set[k] = true
 	}
@@ -28,15 +28,15 @@ func (set StringSet) AddAll(sst StringSet) StringSet {
 // Returns the called object with the newly added entries
 // in order to allow call chaining. It is safe to ignore the
 // return value if desired.
-func (set StringSet) AddAllInSlice(ssl []string) StringSet {
+func (set Set) AddAllInSlice(ssl []string) Set {
 	for _, str := range ssl {
 		set[str] = true
 	}
 	return set
 }
 
-func New(args ...string) StringSet {
-	sset := StringSet{}
+func New(args ...string) Set {
+	sset := Set{}
 	for _, s := range args {
 		sset.Add(s)
 	}
@@ -44,9 +44,9 @@ func New(args ...string) StringSet {
 }
 
 
-// Difference creates a new StringSet containing the strings
+// Difference creates a new Set containing the strings
 // in set that are not in set2.
-func (set StringSet) Difference(set2 StringSet) StringSet {
+func (set Set) Difference(set2 Set) Set {
 	diffSet := New()
 	for k := range set {
 		if ! set2.Contains(k) {
@@ -61,7 +61,7 @@ func (set StringSet) Difference(set2 StringSet) StringSet {
 // called on.
 // Returns true if the set passed in (sst) is the empty set.
 // TODO: can nil be passed in?
-func (set StringSet) IsSubset(sst StringSet) bool {
+func (set Set) IsSubset(sst Set) bool {
 	for k := range set {
 		if !sst[k] {
 			return false
@@ -70,16 +70,16 @@ func (set StringSet) IsSubset(sst StringSet) bool {
 	return true
 }
 
-func (set StringSet) Remove(st string) {
+func (set Set) Remove(st string) {
 	delete(set, st)
 }
 
-func (set StringSet) Contains(st string) bool {
+func (set Set) Contains(st string) bool {
 	_, present := set[st]
 	return present
 }
 
-func (set StringSet) Slice() []string {
+func (set Set) Slice() []string {
 	slc := make([]string, 0, len(set))
 	for k := range set {
 		slc = append(slc, k)
@@ -87,7 +87,7 @@ func (set StringSet) Slice() []string {
 	return slc
 }
 
-func (set StringSet) String() string {
+func (set Set) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("[")
 	first := true

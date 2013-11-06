@@ -17,7 +17,7 @@ func TestNewWithStringSlice(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	set := StringSet{}
+	set := Set{}
 	if len(set) != 0 {
 		t.Errorf("len: %v", len(set))
 	}
@@ -67,8 +67,8 @@ func TestAdd(t *testing.T) {
 	}
 }
 
-func TestStringSetContains(t *testing.T) {
-	set := StringSet{}
+func TestSetContains(t *testing.T) {
+	set := Set{}
 	if len(set) != 0 {
 		t.Errorf("len: %v", len(set))
 	}
@@ -91,10 +91,10 @@ func TestStringSetContains(t *testing.T) {
 	}
 }
 
-func TestStringSetAddAll(t *testing.T) {
+func TestSetAddAll(t *testing.T) {
 
-	set1 := StringSet{}
-	set2 := StringSet{}
+	set1 := Set{}
+	set2 := Set{}
 
 	str1 := "1"
 	str2 := "2"
@@ -175,9 +175,9 @@ func TestAddAllInSlice(t *testing.T) {
 	}
 }
 
-func TestStringSetRemove(t *testing.T) {
+func TestSetRemove(t *testing.T) {
 
-	set := StringSet{}
+	set := Set{}
 
 	str1 := "1"
 	str2 := "2"
@@ -221,10 +221,10 @@ func TestStringSetRemove(t *testing.T) {
 
 func TestIsSubset(t *testing.T) {
 
-	set1 := StringSet{}
-	set2 := StringSet{}
-	set3 := StringSet{}
-	set4 := StringSet{}
+	set1 := Set{}
+	set2 := Set{}
+	set3 := Set{}
+	set4 := Set{}
 
 	str1 := "1"
 	str2 := "2"
@@ -271,7 +271,7 @@ func TestDifference(t *testing.T) {
 	set1 := New("1", "2", "3", "4")
 	set2 := New("21", "22", "3", "4", "55")
 
-	var diffSet StringSet
+	var diffSet Set
 	diffSet = set1.Difference(set2)
 
 	if len(diffSet) != 2 { t.Errorf("len: %v", len(diffSet)) }
