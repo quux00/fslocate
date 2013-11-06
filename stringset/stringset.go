@@ -44,9 +44,16 @@ func New(args ...string) StringSet {
 }
 
 
-func (set StringSet) Difference(set2 StringSet) {
-	diffSet := make(StringSet, 0, max(len(set), len(set2)))
-	// LEFT OFF: need to do difference
+// Difference creates a new StringSet containing the strings
+// in set that are not in set2.
+func (set StringSet) Difference(set2 StringSet) StringSet {
+	diffSet := New()
+	for k := range set {
+		if ! set2.Contains(k) {
+			diffSet.Add(k)
+		}
+	}
+	return diffSet
 }
 
 // IsSubset returns true if the all values in the set passed in as
@@ -72,6 +79,14 @@ func (set StringSet) Contains(st string) bool {
 	return present
 }
 
+func (set StringSet) Slice() []string {
+	slc := make([]string, 0, len(set))
+	for k := range set {
+		slc = append(slc, k)
+	}
+	return slc
+}
+
 func (set StringSet) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("[")
@@ -87,13 +102,5 @@ func (set StringSet) String() string {
 	}
 	buffer.WriteString("]")
 	return buffer.String()
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	} else {
-		return b
-	}
 }
 	

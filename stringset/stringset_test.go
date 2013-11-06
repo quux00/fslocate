@@ -2,13 +2,13 @@ package stringset
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 )
 
 func TestNewWithStringSlice(t *testing.T) {
 	sslice := []string{"aa", "bb", "cc"}
 	set := New(sslice...)
-	fmt.Printf("%v\n", set)
 
 	if len(set) != 3 { t.Errorf("len: %v", len(set)) }
 	if ! set.Contains("aa") { t.Errorf("%v", set) }
@@ -217,7 +217,6 @@ func TestStringSetRemove(t *testing.T) {
 	if len(set) != 0 {
 		t.Errorf("len: %v", len(set))
 	}
-
 }
 
 func TestIsSubset(t *testing.T) {
@@ -262,7 +261,43 @@ func TestIsSubset(t *testing.T) {
 	if !set4.IsSubset(set1) {
 		t.Errorf("set1: %v; set4: %v", set1, set4)
 	}
+
 	if set1.IsSubset(set4) {
 		t.Errorf("set1: %v; set4: %v", set1, set4)
 	}
+}
+
+func TestDifference(t *testing.T) {
+	set1 := New("1", "2", "3", "4")
+	set2 := New("21", "22", "3", "4", "55")
+
+	var diffSet StringSet
+	diffSet = set1.Difference(set2)
+
+	if len(diffSet) != 2 { t.Errorf("len: %v", len(diffSet)) }
+	if   diffSet.Contains("3") { t.Errorf("%v", diffSet) }
+	if ! diffSet.Contains("1") { t.Errorf("%v", diffSet) }
+	if ! diffSet.Contains("2") { t.Errorf("%v", diffSet) }
+
+	diffSet = set2.Difference(set1)
+	if len(diffSet) != 3 { t.Errorf("len: %v", len(diffSet)) }
+	if   diffSet.Contains("3") { t.Errorf("%v", diffSet) }
+	if ! diffSet.Contains("21") { t.Errorf("%v", diffSet) }
+	if ! diffSet.Contains("22") { t.Errorf("%v", diffSet) }
+	if ! diffSet.Contains("55") { t.Errorf("%v", diffSet) }
+}
+
+
+func TestSlice(t *testing.T) {
+	set := New("21", "22", "3", "4", "55")
+	slc := set.Slice()
+
+	if len(slc) != len(set) { t.Errorf("%v vs. %v", len(slc), len(set)) }
+
+	sort.Strings(slc)
+	if slc[0] != "21" { t.Errorf("%v", slc) }
+	if slc[1] != "22" { t.Errorf("%v", slc) }
+	if slc[2] != "3" { t.Errorf("%v", slc) }
+	if slc[3] != "4" { t.Errorf("%v", slc) }
+	if slc[4] != "55" { t.Errorf("%v", slc) }
 }

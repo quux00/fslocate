@@ -50,12 +50,35 @@ func Index(args []string) {
 	// TODO: what is this for?
 	dbHandler()  // TODO: call as own goroutine
 
-	processTopLevelEntries(topIndexDirs)
-	
+	err = processTopLevelEntries(topIndexDirs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+		return
+	}
+
 	// TODO: put this in a goroutine
 	// TODO: split up the topIndexDirs into nindexers equal sized pieces
 	doIndex(topIndexDirs, ignorePatterns)
 }
+
+// doIndex is the main logic controller for the indexing
+// >>> MORE HERE <<<
+// TODO: should this return an error?
+func doIndex(indexDirs []string, ignorePatterns stringset.StringSet) {
+	var err error
+	for _, dir := range filter(indexDirs, ignorePatterns) {
+		prf("Searching: %v\n", dir)
+		files, subdirs := scanDir(dir)
+
+		err = syncWithDatabase( filter(files, ignorePatterns), filter(subdirs, ignorePatterns) )
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+			return
+		}
+		doIndex(subdirs, ignorePatterns)
+	}
+}
+
 
 func initDb() error {
 	var err error
@@ -66,6 +89,8 @@ func initDb() error {
 	return nil
 }
 
+
+// processTopLevelEntries 
 func processTopLevelEntries(confIndexDirs []string) error {
 	var (
 		err error
@@ -78,57 +103,71 @@ func processTopLevelEntries(confIndexDirs []string) error {
 	}
 	prf("DB-Index-Dirs: %v\n", dbIndexDirs)
 
-	delPaths, err = determinePathsToDeleteInDb(confIndexDirs, dbIndexDirs)
+	delPaths = determineTopLevelPathsToDeleteInDb(confIndexDirs, dbIndexDirs)
+	// TODO: send this into its own goroutine -> need to pass a channel in to synchronize on
+	err = dbDelete(delPaths)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+		return err
+	}
+
+	// insert all toplevel dirs as such
+	for _, dir := range confIndexDirs {
+		if finfo, err := os.Stat(dir); err != nil {
+			return err
+		} else if !finfo.IsDir() {
+			return fmt.Errorf("ERROR: %v in in the config indexdir is not a directory", dir)
+		}
+	}
+	_, dirsToInsert, err := findEntriesNotInDb(nil, confIndexDirs)
 	if err != nil {
 		return err
 	}
 
-	// TODO: need to delete delPaths from the db
-	
+	if dirsToInsert != nil && len(dirsToInsert) > 0 {
+		dbInsert(confIndexDirs, DIR_TYPE, true)
+	}
+
 	return nil
 }
 
-
-// the purpose of this is to determine what to delete from
-// the database table
-func determinePathsToDeleteInDb(confIndexDirs, dbIndexDirs) []string {
-	var (
-		inDbOnly []string
-		parentPaths []string
-		delPaths []string
-	)
-
-	inDbOnly = filterOutExactMatches(confDirs, dbDirs)
-	
-	// left off
-	for _, dbdir := range inDbOnly {
-		for _, confDir := range confDir {
-			// example
-			// confdir = /usr/lib/hadoop
-			// dbdir   = /usr/lib
-			if strings.HasPrefix(confdir, dbdir) {
-				parentPaths = append()
-			} else if ! strings.HasPrefix(dbdir, confdir) {
-				
-			}
+// isChildOfAny checks whether path is a child of any of the
+// paths in the paths StringSet.
+// TODO: StringSet should be renamed Set, since you have to say stringset.Set
+func isChildOfAny(paths stringset.StringSet, candidateChild string) bool {
+	for candidateParent := range paths {
+		if strings.HasPrefix(candidateChild, candidateParent) {
+			return true
 		}
 	}
-	
-	return newPaths, childPaths, parentPaths, err
+	return false
 }
 
-func filterOutExactMatches(confDirs, dbDirs []string) (inConfOnly, inDbOnly []string) {
-	inConfOnly = make([]string, 0, len(confDirs))
-	inDbOnly   = make([]string, 0, len(dbDirs))
 
-	confDirSet := stringset.New(confDirs...)
+// determineTopLevelPathsToDeleteInDb determines what top level entries to delete from
+// the database table. The values it returns may have SQL wildcards (%), so delete
+// stmts should be done with 'like' not '='
+func determineTopLevelPathsToDeleteInDb(confIndexDirs, dbIndexDirs []string) []string {
+	
+	dbset := stringset.New(dbIndexDirs...)
+	confset := stringset.New(confIndexDirs...)
+	inDbOnlySet := dbset.Difference(confset)
+	inConfOnlySet := confset.Difference(dbset)
+	delPaths := make([]string, 0)
 
-	for _, dbdir := range dbDirs {
-		if confDirSet.Contains(dbdir) {
-			inDbOnly = append(inDbOnly, dbdir)
+	for dbdir := range inDbOnlySet {
+		// entries only in the dbset that are children of an entry in the confIndexDir
+		// only needs to be deleted itself (not its children). A dbdir that is a child
+		// of a confIndexDir is determined by the confIndexDir being a prefix of the dbdir.
+		// If dbdir is not a child, then delete it and all its children (by appending % wildcard)
+		if isChildOfAny(confset, dbdir) {
+			delPaths = append(delPaths, dbdir)
+		} else {
+			delPaths = append(delPaths, dbdir + "%")
 		}
 	}
-	return inDbOnly
+	
+	return delPaths
 }
 
 func lookUpTopLevelDirsInDb() (dbIndexDirs []string, err error) {
@@ -173,15 +212,24 @@ func filter(pathNames []string, ignorePatterns stringset.StringSet) []string {
 	return keepers
 }
 
-func syncWithDatabase(fileNames, dirNames []string) {
+func syncWithDatabase(fileNames, dirNames []string) error {
 	filesToInsert, dirsToInsert, err := findEntriesNotInDb(fileNames, dirNames)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-		return
+		return err
 	}
-	insertIntoDb(filesToInsert, FILE_TYPE)
-	insertIntoDb(dirsToInsert, DIR_TYPE)
-	deleteFromDb() // TODO: how will this work?
+	err = dbInsert(filesToInsert, FILE_TYPE, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+		return err
+	}
+	err = dbInsert(dirsToInsert, DIR_TYPE, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
+		return err
+	}
+	// dbDelete() // TODO: how will this work?
+	return nil
 }
 
 func findEntriesNotInDb(filePaths, dirPaths []string) (filesToInsert, dirsToInsert []string, err error) {
@@ -194,9 +242,9 @@ func findEntriesNotInDb(filePaths, dirPaths []string) (filesToInsert, dirsToInse
 	if err != nil { return }
 	defer stmt.Close()
 
-	f := func(pathNames []string) (pathsToInsert []string, err error) {		
+	f := func(pathNames []string) (pathsToInsert []string, err error) {
 		pathsToInsert = make([]string, 0, len(pathsToInsert))
-		
+
 		for _, path := range pathNames {
 			err = stmt.QueryRow(path).Scan(&count)
 			if err != nil {
@@ -211,30 +259,63 @@ func findEntriesNotInDb(filePaths, dirPaths []string) (filesToInsert, dirsToInse
 
 	filesToInsert, err = f(filePaths)
 	if err != nil { return }
-	
+
 	dirsToInsert, err  = f(dirPaths)
 	if err != nil { return }
-	
+
 	return filesToInsert, dirsToInsert, err
 }
 
-func insertIntoDb(pathsToInsert []string, entryType string) error {
+// dbDelete deletes each of the paths passed in from the files table
+// the paths may have wildcards, since SQL is uses like not = to
+// select which rows to delete.
+func dbDelete(paths []string) error {
+	stmt, err := db.Prepare("DELETE FROM files WHERE path like $1")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, path := range paths {
+		prf("Deleting: %v\n", path)
+
+		res, err := stmt.Exec(path)
+		if err != nil {
+			return err
+		}
+		_, err = res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		// not checking row count
+		// because with the wildcards a parent with wildcard may delete a child
+		// and when the child delete stmt executes it doesn't delete anything
+	}
+	return nil
+}
+
+
+// dbInsert inserts into the files table
+// all pathsToInsert must either be toplevel or not toplevel, where
+// 'toplevel' means it is a starting or 'root' directory in the user's config dir
+func dbInsert(pathsToInsert []string, entryType string, toplevel bool) error {
 	var (
 		stmt *sql.Stmt
 		res sql.Result
 		err error
 	)
 
-	stmt, err = db.Prepare("INSERT INTO files(path, type) values($1, $2)")
+	stmt, err = db.Prepare("INSERT INTO files(path, type, toplevel) values($1, $2, $3)")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: unable to prepare insert stmt: %v\n", err)
 		return err
 	}
-
+	defer stmt.Close()
+	
 	for _, path := range pathsToInsert {
 		prf("Inserting: %v\n", path)
-		
-		res, err = stmt.Exec(path, entryType)
+
+		res, err = stmt.Exec(path, entryType, toplevel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: unable to insert: %v\n", err)
 			return err
@@ -248,12 +329,8 @@ func insertIntoDb(pathsToInsert []string, entryType string) error {
 			return fmt.Errorf("Number of rows affected was not 1. Was: %d", rowCnt);
 		}
 	}
-	
-	return nil
-}
 
-func deleteFromDb() {
-	// TODO: impl
+	return nil
 }
 
 // scanDir looks at all the entries in the specified directory.
@@ -280,17 +357,6 @@ func scanDir(dirpath string) (files, subdirs []string) {
 	return files, subdirs
 }
 
-// doIndex is the main logic controller for the indexing
-// >>> MORE HERE <<<
-func doIndex(indexDirs []string, ignorePatterns stringset.StringSet) {
-	for _, dir := range filter(indexDirs, ignorePatterns) {
-		prf("Searching: %v\n", dir)
-		files, subdirs := scanDir(dir)
-		
-		syncWithDatabase( filter(files, ignorePatterns), filter(subdirs, ignorePatterns) )
-		doIndex(subdirs, ignorePatterns)
-	}
-}
 
 // readInTopLevelIndexDirs reads in from the fslocate config file that lists
 // all the root directories to search and index.  It returns a list of
