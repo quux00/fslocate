@@ -1,4 +1,27 @@
 // TODO: move this to its own subpackage
+// DESIGN
+// The indexer has two phases, the latter of which has three main controls of flow
+// ----------------------------------
+// Phase 1: read in the conf.fslocate.indexlist file to read in all the 'toplevel' dirs
+//          This is compared with toplevel entries in the database and inserts or deletions
+//          in the db are done as appropriate
+// ----------------------------------
+// Phase 2: 2 goroutines and 1 controller in the main thread
+//   Main thread:
+//     creates indexer goroutines and database controller goroutine
+//     The indexer goroutines are giving a channel to listen on for the next directory to search
+//     The # of indexer threads is determined by the nindexers value
+//     The main thread keeps a list of directories to be searched and feeds the nextdir-channel
+//   Indexer goroutine:
+//     Waits for a dir to search on the nextdir-channel
+//     Once it has one it sends a query to the dbquery-ch asking for all the entries in the db
+//        for that dir and it sends a channel to be messaged back on with the answer
+//     While waiting it looks up the entries in the fs
+//     It waits for the answer from the db and compares the results.  Based on that it puts
+//     db deletions on the dbdelete-channel and db-inserts on the dbinsert-channel
+//     When it has finished it puts all subdirs it found onto the nextdir-channel  (WAIT: MAY NOT NEED THE MAIN THREAD TO MONITOR THE NEXTDIR-CH => MAY BE SELF-REGULATING !!)
+//   Database handler goroutine:
+//     LEFT OFF HERE
 package main
 
 import (
@@ -63,7 +86,6 @@ func Index(args []string) {
 
 // doIndex is the main logic controller for the indexing
 // >>> MORE HERE <<<
-// TODO: should this return an error?
 func doIndex(indexDirs []string, ignorePatterns stringset.Set) {
 	var err error
 	for _, dir := range filter(indexDirs, ignorePatterns) {
