@@ -1,7 +1,7 @@
-CREATE TABLE files (
+CREATE TABLE fsentry (
   id   SERIAL PRIMARY KEY,
   path text,
   type char(1),
   toplevel bool
 );
-CREATE INDEX ON files ((lower(path)));
+CREATE INDEX ON fsentry ((lower(path)));

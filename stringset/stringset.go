@@ -56,11 +56,13 @@ func (set Set) Difference(set2 Set) Set {
 	return diffSet
 }
 
+// 
 // IsSubset returns true if the all values in the set passed in as
 // an argument (sst) are in the values of the set the method was
 // called on.
 // Returns true if the set passed in (sst) is the empty set.
 // TODO: can nil be passed in?
+// 
 func (set Set) IsSubset(sst Set) bool {
 	for k := range set {
 		if !sst[k] {

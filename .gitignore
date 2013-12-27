@@ -13,3 +13,5 @@ pom.xml.asc
 /db/*.db
 /conf/fslocate.conf
 /go-client/src/fslocate-client/fslocate-client
+old
+fslocate
