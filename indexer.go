@@ -1,5 +1,3 @@
-// TODO: move this to its own subpackage
-// DESIGN
 // The indexer has two phases, the latter of which has three main controls of flow
 // ----------------------------------
 // Phase 1: read in the conf.fslocate.indexlist file to read in all the 'toplevel' dirs
@@ -27,8 +25,7 @@
 //
 // ISSUES / TODOs
 // * TODO: Filter out things to be ignored from the ignore conf file
-// * ISSUE: Top level dirs are not being inserted
-// * ISSUE: Entries with same Path are being inserted more than once
+// * TODO: write test (manual or unit) that puts stuff in the db that is not on the fs
 //
 package main
 
@@ -74,7 +71,7 @@ type dbReply struct {
 // Index needs to be documented
 func Index(numIndexers int) {
 	nindexers = numIndexers
-	prf("Using %v indexers", nindexers)
+	prf("Using %v indexer(s)\n", nindexers)
 
 	var (
 		err error
@@ -128,7 +125,7 @@ func Index(numIndexers int) {
 	replyChan := make(chan dbReply)
 	pr("Telling dbHandler to shutdown ... ")
 	dbChan <- dbTask{action: QUIT, replyChan: replyChan}
-	prn("DONE (dbHandler told)")
+	prn("DONE (dbHandler shutdown)")
 
 	select {
 	case <-replyChan:
@@ -203,6 +200,11 @@ func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, 
 	fsonly := fsrecsSet.Difference(dbrecsSet)
 	dbonly := dbrecsSet.Difference(fsrecsSet)
 
+	prf("dbrecSets: %v\n", dbrecsSet)
+	prf("fsrecSets: %v\n", fsrecsSet)
+	prf("dbonly: %v\n", dbonly)
+	prf("fsonly: %v\n", fsonly)
+	
 	N := len(fsonly) + len(dbonly)
 	tmpReplyChan := make(chan dbReply, N)
 	for entry, _ := range dbonly {
@@ -212,7 +214,7 @@ func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, 
 	for entry, _ := range fsonly {
 		dbChan <- dbTask{INSERT, entry, tmpReplyChan}
 
-		if entry.Typ == fsentry.DIR {
+		if entry.Typ == fsentry.DIR && entry.Path != direntry.Path {
 			putOnDirChan(entry, dirChan)
 		}
 	}
@@ -278,41 +280,6 @@ func scanDir(direntry fsentry.E) (entries []fsentry.E, err error) {
 	return entries, nil
 }
 
-// // filter removes all pathNames where the basename (filepath.Base)
-// // matches an "ignore" pattern in the ignorePatterns Set
-// // create and returns a new []string; it does not modify the pathNames
-// // slice passed in
-// func filter(pathNames []string, ignorePatterns stringset.Set) []string {
-// 	keepers := make([]string, 0, len(pathNames))
-// 	for _, path := range pathNames {
-// 		basepath := filepath.Base(path)
-// 		if !ignorePatterns.Contains(basepath) {
-// 			keepers = append(keepers, path)
-// 		}
-// 	}
-// 	return keepers
-// }
-
-// func syncWithDatabase(fileNames, dirNames []string) error {
-// 	filesToInsert, dirsToInsert, err := findEntriesNotInDb(fileNames, dirNames)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-// 		return err
-// 	}
-// 	err = dbInsert(filesToInsert, FILE_TYPE, false)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-// 		return err
-// 	}
-// 	err = dbInsert(dirsToInsert, DIR_TYPE, false)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-// 		return err
-// 	}
-// 	// dbDelete() // TODO: how will this work?
-// 	return nil
-// }
-
 //
 // dbDelete deletes each of the paths passed in from the files table
 // the paths may have wildcards, since SQL is uses like not = to
@@ -349,7 +316,7 @@ func dbQuery(qStmt, qStmt2 *sql.Stmt, entry fsentry.E) ([]fsentry.E, error) {
 
 	for rows.Next() {
 		var nextEntry fsentry.E
-		rows.Scan(&nextEntry.Path, &nextEntry.Typ)
+		rows.Scan(&nextEntry.Path, &nextEntry.Typ, &nextEntry.IsTopLevel)
 		entries = append(entries, nextEntry)
 	}
 
@@ -374,7 +341,7 @@ func getChildEntriesInDb(qStmt2 *sql.Stmt, entries []fsentry.E) ([]fsentry.E, er
 	children := entries[0].Path + "/%"
 	grandchildren := entries[0].Path + "/%/%"
 
-	rows, err := qStmt2.Query(fsentry.FILE, children, grandchildren)
+	rows, err := qStmt2.Query(children, grandchildren)
 	if err != nil {
 		return entries, err
 	}
@@ -382,7 +349,7 @@ func getChildEntriesInDb(qStmt2 *sql.Stmt, entries []fsentry.E) ([]fsentry.E, er
 
 	for rows.Next() {
 		var nextEntry fsentry.E
-		rows.Scan(&nextEntry.Path, &nextEntry.Typ)
+		rows.Scan(&nextEntry.Path, &nextEntry.Typ, &nextEntry.IsTopLevel)
 		entries = append(entries, nextEntry)
 	}
 	prf("getChildEntriesInDb: []entries going out: %v\n", entries)
@@ -420,31 +387,6 @@ func dbInsert(insStmt *sql.Stmt, entry fsentry.E) error {
 	return nil
 }
 
-// // scanDir looks at all the entries in the specified directory.
-// // It returns a slice of files (full path) and a slice of subdirs (full path)
-// // It does not recurse into subdirectories.
-// func scanDir(dirpath string) (files, subdirs []string) {
-// 	var finfolist []os.FileInfo
-// 	var err error
-
-// 	finfolist, err = ioutil.ReadDir(dirpath)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir: %v\n", dirpath)
-// 		return files, subdirs
-// 	}
-
-// 	for _, finfo := range finfolist {
-// 		if finfo.IsDir() {
-// 			// TODO: do I need to worry about type of file separator on Windows?
-// 			subdirs = append(subdirs, dirpath+"/"+finfo.Name())
-// 		} else {
-// 			files = append(files, dirpath+"/"+finfo.Name())
-// 		}
-// 	}
-// 	return files, subdirs
-// }
-
-
 //
 // DOCUMENT ME!!
 //
@@ -461,13 +403,13 @@ func dbHandler(db *sql.DB, dbChan chan dbTask) {
 	}
 	defer insStmt.Close()
 
-	qryStmt, err := db.Prepare("SELECT path, type FROM fsentry WHERE path = $1")
+	qryStmt, err := db.Prepare("SELECT path, type, toplevel FROM fsentry WHERE path = $1")
 	if err != nil {
 		panic(err)
 	}
 	defer qryStmt.Close()
 
-	qryStmt2, err := db.Prepare("SELECT path, type FROM fsentry WHERE type = $1 AND path LIKE $2 AND path NOT LIKE $3")
+	qryStmt2, err := db.Prepare("SELECT path, type, toplevel FROM fsentry WHERE path LIKE $1 AND path NOT LIKE $2")
 	if err != nil {
 		panic(err)
 	}

@@ -68,7 +68,7 @@ func syncTopLevelEntries(db *sql.DB, params TopLevelInfo) error {
 		} else if !finfo.IsDir() {
 			return fmt.Errorf("ERROR: %v in in the config indexdir is not a directory", dir)
 		}
-		prf("Puting %v on dirChan\n", dir)
+		prf("Putting %v on dirChan\n", dir)
 		params.dirChan <- fsentry.E{dir, fsentry.DIR, true}
 	}
 
