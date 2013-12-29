@@ -1,2 +1,8 @@
-CREATE TABLE files (id integer primary key, path text, type char);
-CREATE INDEX path_idx on files (path);
+CREATE TABLE fsentry(
+  id integer primary key, 
+  path text NOT NULL UNIQUE, 
+  type char,
+  toplevel TINYINT
+);
+
+CREATE INDEX path_idx on fsentry (path);

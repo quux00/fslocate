@@ -15,7 +15,7 @@ func Search(term string) {
 	}
 	defer db.Close()
 
-	st, err := db.Prepare("select path from files where lower(path) like '%" + strings.ToLower(term) + "%'")
+	st, err := db.Prepare("select path from fsentry where lower(path) like '%" + strings.ToLower(term) + "%'")
 	if err != nil {
 		fmt.Println(err)
 		return

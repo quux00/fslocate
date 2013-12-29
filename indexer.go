@@ -23,6 +23,13 @@
 //     When it has finished it puts all subdirs it found onto the nextdir-channel  (WAIT: MAY NOT NEED THE MAIN THREAD TO MONITOR THE NEXTDIR-CH => MAY BE SELF-REGULATING !!)
 //   Database handler goroutine:
 //     LEFT OFF HERE
+
+//
+// ISSUES / TODOs
+// * TODO: Filter out things to be ignored from the ignore conf file
+// * ISSUE: Top level dirs are not being inserted
+// * ISSUE: Entries with same Path are being inserted more than once
+//
 package main
 
 import (
@@ -33,55 +40,47 @@ import (
 	"fslocate/stringset"
 	_ "github.com/bmizerany/pq"
 	"io/ioutil"
-	"log"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
-var verbose bool
 var nindexers int
 
+// constant message types to the dbHandler
 const (
-	INSERT = "insert"
-	DELETE = "delete"
-	QUERY  = "query"
-	QUIT   = "quit" // tell dbHandler thread to shut down
+	INSERT = iota
+	DELETE
+	QUERY 
+	QUIT    // tell dbHandler thread to shut down
 )
 
-// TODO: this may need to change for query actions
+const (
+	CONFIG_FILE = "conf/fslocate.indexlist"
+	IGNORE_FILE = "conf/fslocate.ignore"
+)
+
 type dbTask struct {
-	action    string    // INSERT, DELETE, QUERY or QUIT
+	action    int       // INSERT, DELETE, QUERY or QUIT
 	entry     fsentry.E // full path and type (file or dir)
 	replyChan chan dbReply
 }
 
-// TODO: this may need to change for inserts/deletes
 type dbReply struct {
 	fsentries []fsentry.E
 	err       error
 }
 
 // Index needs to be documented
-func Index(args []string) {
-	parseArgs(args)
+func Index(numIndexers int) {
+	nindexers = numIndexers
 	prf("Using %v indexers", nindexers)
 
 	var (
 		err error
-		ignorePatterns stringset.Set = readInIgnorePatterns()
-		topIndexDirs []string = readInTopLevelIndexDirs()
+		// ignorePatterns stringset.Set = readInIgnorePatterns()  // TODO: still need to utiliize these ignore patterns
 		db *sql.DB    // safe for concurrent use by multiple goroutines
 	)
-
-	// DEBUG
-	// fmt.Printf("nindexers: %v\n", nindexers)
-	// prf("%T: %v\n", args, args)
-	fmt.Printf("%v\n", ignorePatterns)
-	fmt.Printf("%v\n", topIndexDirs)
-	// END DEBUG
 
 	// have the db conx global allows multiple dbHandler routines to share it if necessary
 	db, err = initDb()
@@ -91,29 +90,27 @@ func Index(args []string) {
 	}
 	defer db.Close()
 
-	// TODO: deferring the initial top level entries until the end
-	// err = processTopLevelEntries(topIndexDirs)
-	// if err != nil {
-	// 	fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-	// 	return
-	// }
-	// // TODO: remove this once the new goroutine versions are working below?
-	// doIndexOrig(topIndexDirs, ignorePatterns)
-
-	// once the top level dirs are dealt with, start go routines (??)
-	// TODO: call as goroutine
-	// TODO: split up the topIndexDirs into nindexers equal sized pieces
-	// TODO: this will be the goroutine that handles incoming requests to query, delete or insert from the db
-	// TODO: need to pass it a channel
-
-	/* ---[ Kick off the routines ]--- */
-
+	
 	dbChan := make(chan dbTask, 32)       // to send requests to the DbHandler
 	dirChan := make(chan fsentry.E, 8192) // to enqueue new dirs to search (shared by indexers)
 	doneChan := make(chan int)            // for indexers to signal 'done' to main thread
 
+	// launch a single dbHandler goroutine
 	go dbHandler(db, dbChan)
 
+
+	/* ---[ First deal with toplevel entries ]--- */
+
+	// these require special handling in terms of what to delete from the db
+	// when this returns there will be some number of directories on the dirChan
+	err = syncTopLevelEntries(db, TopLevelInfo{dirChan, dbChan, CONFIG_FILE})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return
+	}
+
+	/* ---[ Kick off the indexers ]--- */
+	
 	for i := 0; i < nindexers; i++ {
 		go indexer(i, dirChan, dbChan, doneChan)
 	}
@@ -121,7 +118,7 @@ func Index(args []string) {
 	/* ---[ The master thread waits for the indexers to finish ]--- */
 
 	countDownLatch := nindexers
-	for countDownLatch > 0 {
+	for ; countDownLatch > 0; countDownLatch-- {
 		idxNum := <- doneChan
 		prf("Indexer #%d is done\n", idxNum)
 	}
@@ -129,7 +126,9 @@ func Index(args []string) {
 	/* ---[ Once indexers done, tell dbHandler to close down the db resources ]--- */
 
 	replyChan := make(chan dbReply)
+	pr("Telling dbHandler to shutdown ... ")
 	dbChan <- dbTask{action: QUIT, replyChan: replyChan}
+	prn("DONE (dbHandler told)")
 
 	select {
 	case <-replyChan:
@@ -137,6 +136,11 @@ func Index(args []string) {
 		fmt.Fprintln(os.Stderr, "WARN: DbHandler thread did not shutdown in the alloted time")
 	}
 }
+
+func initDb() (*sql.DB, error) {
+	return sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
+}
+
 
 //
 // indexer runs in its own goroutine
@@ -172,20 +176,23 @@ func indexer(idxNum int, dirChan chan fsentry.E, dbChan chan dbTask, doneChan ch
 }
 
 //
-// direntry should be a fsentry with typ = DIR_TYPE
+// direntry should be a fsentry with typ = fsentry.DIR
 //
 //
 func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, replyChan chan dbReply) error {
+	prf("QUERY sent to dbHandler for: %v\n", direntry)
 	dbChan <- dbTask{QUERY, direntry, replyChan}
 
 	var fsentries []fsentry.E
-	fsentries, err := scanDir2(direntry)
+	fsentries, err := scanDir(direntry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir %v: %v\n", direntry.Path, err)
 		return err
 	}
 
+	prf("Attempting to get QUERY results from dbChan for: %v\n", direntry)
 	reply := <- replyChan
+	prf("Reply is: %v\n", reply)
 	if reply.err != nil {
 		fmt.Fprintf(os.Stderr, "Error while reading from the database: %v\n", err)
 		return reply.err
@@ -195,11 +202,6 @@ func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, 
 
 	fsonly := fsrecsSet.Difference(dbrecsSet)
 	dbonly := dbrecsSet.Difference(fsrecsSet)
-
-	// DEBUG
-	fmt.Printf(">> fsonly: %v\n", fsonly)
-	fmt.Printf(">> dbonly: %v\n", dbonly)
-	// END DEBUG
 
 	N := len(fsonly) + len(dbonly)
 	tmpReplyChan := make(chan dbReply, N)
@@ -254,10 +256,12 @@ func putOnDirChan(entry fsentry.E, dirChan chan fsentry.E) {
 // direntry should be a fsentry.E with Typ = DIR
 // TODO: can this be merged with the orig scanDir ??
 //
-func scanDir2(direntry fsentry.E) (entries []fsentry.E, err error) {
+func scanDir(direntry fsentry.E) (entries []fsentry.E, err error) {
 	var lsFileInfo []os.FileInfo
-	entries = make([]fsentry.E, 0, 4)
+	entries = make([]fsentry.E, 1, 4)
+	entries[0] = direntry
 
+	prf("Scanning %v for files\n", direntry.Path)
 	lsFileInfo, err = ioutil.ReadDir(direntry.Path)
 	if err != nil {
         return
@@ -274,157 +278,20 @@ func scanDir2(direntry fsentry.E) (entries []fsentry.E, err error) {
 	return entries, nil
 }
 
-//
-// doIndexOrig is the main logic controller for the indexing
-// >>> MORE HERE <<<
-//
-// func doIndexOrig(indexDirs []string, ignorePatterns stringset.Set) {
-// 	var err error
-// 	for _, dir := range filter(indexDirs, ignorePatterns) {
-// 		prf("Searching: %v\n", dir)
-// 		files, subdirs := scanDir(dir)
-
-// 		err = syncWithDatabase( filter(files, ignorePatterns), filter(subdirs, ignorePatterns) )
-// 		if err != nil {
-// 			fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-// 			return
-// 		}
-// 		doIndex(subdirs, ignorePatterns)
-// 	}
-// }
-
-func initDb() (*sql.DB, error) {
-	return sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
-}
-
-//
-// processTopLevelEntries deals with the "top level" dirs specified
-// in the user's config file ("indexlist")
-// confIndexDirs ls of directories to start processing
-//
-// func processTopLevelEntries(confIndexDirs []string) error {
-// 	var (
-// 		err error
-// 		dbIndexDirs, delPaths []string
-// 	)
-
-// 	dbIndexDirs, err = lookUpTopLevelDirsInDb()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	prf("DB-Index-Dirs: %v\n", dbIndexDirs)
-
-// 	delPaths = determineTopLevelPathsToDeleteInDb(confIndexDirs, dbIndexDirs)
-// 	// TODO: send this into its own goroutine -> need to pass a channel in to synchronize on
-// 	err = dbDelete(delPaths)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: %v\n", err)
-// 		return err
-// 	}
-
-// 	// ensure that the top level conf index dirs exist and are dirs
-// 	for _, dir := range confIndexDirs {
-// 		if finfo, err := os.Stat(dir); err != nil {
-// 			return err
-// 		} else if !finfo.IsDir() {
-// 			return fmt.Errorf("ERROR: %v in in the config indexdir is not a directory", dir)
+// // filter removes all pathNames where the basename (filepath.Base)
+// // matches an "ignore" pattern in the ignorePatterns Set
+// // create and returns a new []string; it does not modify the pathNames
+// // slice passed in
+// func filter(pathNames []string, ignorePatterns stringset.Set) []string {
+// 	keepers := make([]string, 0, len(pathNames))
+// 	for _, path := range pathNames {
+// 		basepath := filepath.Base(path)
+// 		if !ignorePatterns.Contains(basepath) {
+// 			keepers = append(keepers, path)
 // 		}
 // 	}
-// 	// insert all toplevel dirs as such
-// 	_, dirsToInsert, err := findEntriesNotInDb(nil, confIndexDirs)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	dbInsert(dirsToInsert, DIR_TYPE, true)
-
-// 	return nil
+// 	return keepers
 // }
-
-//
-// isChildOfAny checks whether path is a child of any of the
-// paths in the paths Set.
-//
-func isChildOfAny(paths stringset.Set, candidateChild string) bool {
-	for candidateParent := range paths {
-		if strings.HasPrefix(candidateChild, candidateParent) {
-			return true
-		}
-	}
-	return false
-}
-
-//
-// determineTopLevelPathsToDeleteInDb determines what "top level" entries to delete
-// from the databasea. The values it returns may have SQL wildcards (%), so delete
-// stmts should be done with 'like' not '='
-//
-func determineTopLevelPathsToDeleteInDb(confIndexDirs, dbIndexDirs []string) []string {
-
-	dbset := stringset.New(dbIndexDirs...)
-	confset := stringset.New(confIndexDirs...)
-	inDbOnlySet := dbset.Difference(confset)
-	delPaths := make([]string, 0, 1)
-
-	for dbdir := range inDbOnlySet {
-		// TODO: this logic needs to be checked one more time and the lang below simplified
-		// entries only in the dbset that are children of an entry in the confIndexDir
-		// only needs to be deleted itself (not its children). A dbdir that is a child
-		// of a confIndexDir is determined by the confIndexDir being a prefix of the dbdir.
-		// If dbdir is not a child, then delete it and its children (append % wildcard)
-		if isChildOfAny(confset, dbdir) {
-			delPaths = append(delPaths, dbdir)
-		} else {
-			delPaths = append(delPaths, dbdir+"%")
-		}
-	}
-
-	return delPaths
-}
-
-//
-// Returns ls of all paths in the database that are marked as toplevel
-//
-// func lookUpTopLevelDirsInDb() (dbIndexDirs []string, err error) {
-// 	var (
-// 		stmt *sql.Stmt
-// 		rows *sql.Rows
-// 	)
-
-// 	stmt, err = db.Prepare("SELECT path FROM fsentry WHERE toplevel = true")
-// 	if err != nil {
-// 		return
-// 	}
-// 	defer stmt.Close()
-
-// 	rows, err = stmt.Query()
-// 	if err != nil {
-// 		return
-// 	}
-// 	defer rows.Close()
-
-// 	for rows.Next() {
-// 		var path string
-// 		rows.Scan(&path)
-// 		dbIndexDirs = append(dbIndexDirs, path)
-// 	}
-
-// 	return dbIndexDirs, nil
-// }
-
-// filter removes all pathNames where the basename (filepath.Base)
-// matches an "ignore" pattern in the ignorePatterns Set
-// create and returns a new []string; it does not modify the pathNames
-// slice passed in
-func filter(pathNames []string, ignorePatterns stringset.Set) []string {
-	keepers := make([]string, 0, len(pathNames))
-	for _, path := range pathNames {
-		basepath := filepath.Base(path)
-		if !ignorePatterns.Contains(basepath) {
-			keepers = append(keepers, path)
-		}
-	}
-	return keepers
-}
 
 // func syncWithDatabase(fileNames, dirNames []string) error {
 // 	filesToInsert, dirsToInsert, err := findEntriesNotInDb(fileNames, dirNames)
@@ -444,50 +311,6 @@ func filter(pathNames []string, ignorePatterns stringset.Set) []string {
 // 	}
 // 	// dbDelete() // TODO: how will this work?
 // 	return nil
-// }
-
-//
-// findEntriesNotInDb looks in the database for each of the paths in
-// filePaths and dirPaths. Any paths not in the database go into the
-// filesToInsert and dirsToInsert string lists, respectively.
-// This fn does NOT search the filesystem for entries.
-//
-// func findEntriesNotInDb(filePaths, dirPaths []string) (filesToInsert, dirsToInsert []string, err error) {
-// 	var (
-// 		stmt *sql.Stmt
-// 		count int
-// 	)
-
-// 	stmt, err = db.Prepare("SELECT count(path) FROM files WHERE path = $1")
-// 	if err != nil { return }
-// 	defer stmt.Close()
-
-// 	f := func(pathNames []string) (pathsToInsert []string, err error) {
-// 		pathsToInsert = make([]string, 0, len(pathsToInsert))
-
-// 		for _, path := range pathNames {
-// 			err = stmt.QueryRow(path).Scan(&count)
-// 			if err != nil {
-// 				return pathsToInsert, err
-// 			}
-// 			if count == 0 {
-// 				pathsToInsert = append(pathsToInsert, path)
-// 			}
-// 		}
-// 		return pathsToInsert, nil
-// 	}
-
-// 	filesToInsert, err = f(filePaths)
-// 	if err != nil {
-// 		return
-// 	}
-
-// 	dirsToInsert, err = f(dirPaths)
-// 	if err != nil {
-// 		return
-// 	}
-
-// 	return filesToInsert, dirsToInsert, err
 // }
 
 //
@@ -513,7 +336,6 @@ func dbDelete(delStmt *sql.Stmt, entry fsentry.E) error {
 }
 
 //
-// new: NOT TESTED
 // dbQuery
 //
 func dbQuery(qStmt, qStmt2 *sql.Stmt, entry fsentry.E) ([]fsentry.E, error) {
@@ -548,9 +370,9 @@ func dbQuery(qStmt, qStmt2 *sql.Stmt, entry fsentry.E) ([]fsentry.E, error) {
 // Assumption: entries has one element in it
 //
 func getChildEntriesInDb(qStmt2 *sql.Stmt, entries []fsentry.E) ([]fsentry.E, error) {
-	lowerCasePath := strings.ToLower(entries[0].Path)
-	children := lowerCasePath + "/%"
-	grandchildren := lowerCasePath + "/%/%"
+	prf("getChildEntriesInDb: []entries coming in: %v\n", entries)
+	children := entries[0].Path + "/%"
+	grandchildren := entries[0].Path + "/%/%"
 
 	rows, err := qStmt2.Query(fsentry.FILE, children, grandchildren)
 	if err != nil {
@@ -563,6 +385,7 @@ func getChildEntriesInDb(qStmt2 *sql.Stmt, entries []fsentry.E) ([]fsentry.E, er
 		rows.Scan(&nextEntry.Path, &nextEntry.Typ)
 		entries = append(entries, nextEntry)
 	}
+	prf("getChildEntriesInDb: []entries going out: %v\n", entries)
 	return entries, nil
 }
 
@@ -577,9 +400,10 @@ func dbInsert(insStmt *sql.Stmt, entry fsentry.E) error {
 	)
 	prf("Inserting: %v\n", entry.Path)
 
-	toplevel := "f"
+	// store boolean vals as 0 or 1 in the db
+	toplevel := 0
 	if entry.IsTopLevel {
-		toplevel = "t"
+		toplevel = 1
 	}
 	res, err = insStmt.Exec(entry.Path, entry.Typ, toplevel)
 	if err != nil {
@@ -596,69 +420,30 @@ func dbInsert(insStmt *sql.Stmt, entry fsentry.E) error {
 	return nil
 }
 
-// scanDir looks at all the entries in the specified directory.
-// It returns a slice of files (full path) and a slice of subdirs (full path)
-// It does not recurse into subdirectories.
-func scanDir(dirpath string) (files, subdirs []string) {
-	var finfolist []os.FileInfo
-	var err error
+// // scanDir looks at all the entries in the specified directory.
+// // It returns a slice of files (full path) and a slice of subdirs (full path)
+// // It does not recurse into subdirectories.
+// func scanDir(dirpath string) (files, subdirs []string) {
+// 	var finfolist []os.FileInfo
+// 	var err error
 
-	finfolist, err = ioutil.ReadDir(dirpath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir: %v\n", dirpath)
-		return files, subdirs
-	}
+// 	finfolist, err = ioutil.ReadDir(dirpath)
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir: %v\n", dirpath)
+// 		return files, subdirs
+// 	}
 
-	for _, finfo := range finfolist {
-		if finfo.IsDir() {
-			// TODO: do I need to worry about type of file separator on Windows?
-			subdirs = append(subdirs, dirpath+"/"+finfo.Name())
-		} else {
-			files = append(files, dirpath+"/"+finfo.Name())
-		}
-	}
-	return files, subdirs
-}
+// 	for _, finfo := range finfolist {
+// 		if finfo.IsDir() {
+// 			// TODO: do I need to worry about type of file separator on Windows?
+// 			subdirs = append(subdirs, dirpath+"/"+finfo.Name())
+// 		} else {
+// 			files = append(files, dirpath+"/"+finfo.Name())
+// 		}
+// 	}
+// 	return files, subdirs
+// }
 
-//
-// readInTopLevelIndexDirs reads in from the fslocate config file that lists
-// all the root directories to search and index.  It returns a list of
-// strings - each a path to search.  The config file is assumed to have
-// one path entry per line.
-// If the config file cannot be found or read, a warning is printed to STDERR
-// and an empty string slice is returned
-//
-func readInTopLevelIndexDirs() []string {
-	indexDirsPath := "conf/fslocate.indexlist"
-	indexDirs := make([]string, 0)
-
-	if ! fileExists(indexDirsPath) {
-		fmt.Fprintf(os.Stderr,
-			"WARN: Unable to find file listing dirs to index: %v\n", indexDirsPath)
-		return indexDirs
-	}
-
-    file, err := os.Open(indexDirsPath)
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", indexDirsPath)
-        return indexDirs
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		ln := strings.TrimSpace(scanner.Text())
-		if len(ln) != 0 {
-			indexDirs = append(indexDirs, ln)
-		}
-	}
-
-	if err = scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", indexDirsPath, err)
-	}
-
-	return indexDirs
-}
 
 //
 // DOCUMENT ME!!
@@ -676,21 +461,17 @@ func dbHandler(db *sql.DB, dbChan chan dbTask) {
 	}
 	defer insStmt.Close()
 
-	// TODO: really need this one?
 	qryStmt, err := db.Prepare("SELECT path, type FROM fsentry WHERE path = $1")
 	if err != nil {
 		panic(err)
 	}
 	defer qryStmt.Close()
 
-	qryStmt2, err := db.Prepare("SELECT path, type FROM fsentry WHERE type = $1 AND lower(path) LIKE $2 AND lower(path) NOT LIKE $3")
+	qryStmt2, err := db.Prepare("SELECT path, type FROM fsentry WHERE type = $1 AND path LIKE $2 AND path NOT LIKE $3")
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		fmt.Printf("!!! qryStmt2 being closed !!!\n", )
-		qryStmt2.Close()
-	}()
+	defer qryStmt2.Close()
 
 	var task dbTask
 	var replyChan chan dbReply
@@ -700,22 +481,22 @@ MAINLOOP:
 		task = <-dbChan
 		switch task.action {
 		case QUERY:
-			fmt.Printf(">> dbHandle QUERYING\n")
+			prf(">> dbHandler QUERYING: %v\n", task.entry)
 			entries, err := dbQuery(qryStmt, qryStmt2, task.entry)
 			task.replyChan <- dbReply{entries, err}
 
 		case INSERT:
-			fmt.Printf(">> dbHandle INSERTing\n")
+			prf(">> dbHandler INSERTING: %v\n", task.entry)
 			err = dbInsert(insStmt, task.entry)
 			task.replyChan <- dbReply{err: err}
 
 		case DELETE:
-			fmt.Printf(">> dbHandle DELETEing\n")
+			prf(">> dbHandler DELETING: %v\n", task.entry)
 			err = dbDelete(delStmt, task.entry)
 			task.replyChan <- dbReply{err: err}
 
 		case QUIT:
-			fmt.Printf(">> dbHandler received QUIT notices\n")
+			prn(">> dbHandler received QUIT notice")
 			replyChan = task.replyChan
 			break MAINLOOP
 		}
@@ -730,7 +511,7 @@ func fileExists(fpath string) bool {
 }
 
 func readInIgnorePatterns() stringset.Set {
-	ignoreFilePath := "conf/fslocate.ignore"
+	ignoreFilePath := IGNORE_FILE
 	ignorePatterns := stringset.Set{}
 
 	if !fileExists(ignoreFilePath) {
@@ -760,61 +541,23 @@ func readInIgnorePatterns() stringset.Set {
 	return ignorePatterns
 }
 
-func parseArgs(args []string) {
-	var intExpected bool
-	var sawDashT bool
-	for _, a := range args {
-		if intExpected {
-			if n, err := strconv.Atoi(a); err == nil {
-				nindexers = n
-				intExpected = false
-			} else {
-				log.Fatalf("ERROR: Number of indexers specified is not a number: %v\n", a)
-			}
-		} else if a == "-v" {
-			verbose = true
-		} else if a == "-t" {
-			if sawDashT {
-				log.Fatalf("ERROR: -t switch specified more than once: %v\n", a)
-			}
-			sawDashT = true
-			intExpected = true
-		} else {
-			log.Fatalf("ERROR: Unexpected cmd line argument: %v\n", a)
-		}
-	}
-	if sawDashT && nindexers == 0 {
-		log.Fatalf("ERROR: -t switch has no number of indexers after it: %v\n", args)
-	} else if nindexers == 0 {
-		nindexers = 1
-	}
-}
-
-// func contains(args []string, searchFor string) bool {
-// 	for _, a := range args {
-// 		if a == searchFor {
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
-
-// TODO: is there a way to flush STDOUT in Go?
-
 func pr(s string) {
 	if verbose {
 		fmt.Print(s)
+		os.Stdout.Sync()
 	}
 }
 
 func prn(s string) {
 	if verbose {
 		fmt.Println(s)
+		os.Stdout.Sync()
 	}
 }
 
 func prf(format string, vals ...interface{}) {
 	if verbose {
 		fmt.Printf(format, vals...)
+		os.Stdout.Sync()
 	}
 }

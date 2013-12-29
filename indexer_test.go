@@ -31,35 +31,34 @@ func TestDbHandlerInsertAndDelete(t *testing.T) {
 
 	go dbHandler(db, dbChan)
 
-	fmt.Println("Handler running")
-
 	fse := fsentry.E{"/var/log/hive/foo", "f", false}
 
 	// ask handler to do insert
-	fmt.Println("Request to insert")
 	dbChan <- dbTask{INSERT, fse, replyChan}
 	reply = <- replyChan
 	if reply.err != nil {
 		t.Errorf("reply.err is not nil: %v", reply.err)
 	}
 
-	// fmt.Println("Now query that new entry")
-	// dbChan <- dbTask(QUERY, fse, replyChan)
-
-
-	fmt.Println("Now delete that entry")
+	// Now query that new entry
+	dbChan <- dbTask{QUERY, fse, replyChan}
+	reply = <- replyChan
+	if len(reply.fsentries) != 1 {
+		t.Errorf("reply.fsentries len: %v", len(reply.fsentries))
+	}
+	if reply.fsentries[0].Path != fse.Path {
+		t.Errorf("paths don't match: %v", reply.fsentries[0].Path)
+	}
+	
+	// Now delete that entry
 	dbChan <- dbTask{DELETE, fse, replyChan}
 	reply = <- replyChan
 	if reply.err != nil {
 		t.Errorf("reply.err is not nil: %v", reply.err)
 	}
 
-	time.Sleep(2 * time.Second)
-	fmt.Println("Sending QUIT action to dbHandler")
 	dbChan <- dbTask{action: QUIT, replyChan: replyChan}
-	fmt.Println("Waiting for QUIT ack from dbHandler")
 	<- replyChan
-	fmt.Println("DONE")
 }
 
 
