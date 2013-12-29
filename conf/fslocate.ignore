@@ -1,5 +1,8 @@
+# RULES (to be implemented)
+# *.class means ignore all entires (FILES or DIRS) that *end* in ".class"
+# abc means ignore all entires that have "abc" anywhere in the path
+# .git/ means ignore all entries in any directory named ".git" (including the .git dir itself) 
 .emacs.dRECENT
 .class
 !drive_c!
-x        
 .git

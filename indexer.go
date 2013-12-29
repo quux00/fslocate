@@ -26,6 +26,9 @@
 // ISSUES / TODOs
 // * TODO: Filter out things to be ignored from the ignore conf file
 // * TODO: write test (manual or unit) that puts stuff in the db that is not on the fs
+// * TODO: when the put fails, need to have a backup signaling channel to the
+//         main thead to start more indexers for now just log in the issue (in putOnDirChan fn)
+// 
 //
 package main
 
@@ -48,14 +51,16 @@ var nindexers int
 const (
 	INSERT = iota
 	DELETE
-	QUERY 
-	QUIT    // tell dbHandler thread to shut down
+	QUERY
+	QUIT // tell dbHandler thread to shut down
 )
 
 const (
 	CONFIG_FILE = "conf/fslocate.indexlist"
 	IGNORE_FILE = "conf/fslocate.ignore"
 )
+
+/* ---[ TYPES ]--- */
 
 type dbTask struct {
 	action    int       // INSERT, DELETE, QUERY or QUIT
@@ -68,16 +73,30 @@ type dbReply struct {
 	err       error
 }
 
+// the tools needed by the indexer to do its job
+type indexerMateriel struct {
+	idxNum         int
+	ignorePatterns stringset.Set
+	dirChan        chan fsentry.E
+	dbChan         chan dbTask
+	doneChan       chan int
+	replyChan      chan dbReply
+}
+
+/* ---[ FUNCTIONS ]--- */
+
 // Index needs to be documented
 func Index(numIndexers int) {
 	nindexers = numIndexers
 	prf("Using %v indexer(s)\n", nindexers)
 
 	var (
-		err error
-		// ignorePatterns stringset.Set = readInIgnorePatterns()  // TODO: still need to utiliize these ignore patterns
-		db *sql.DB    // safe for concurrent use by multiple goroutines
+		err            error
+		ignorePatterns stringset.Set
+		db             *sql.DB // safe for concurrent use by multiple goroutines
 	)
+
+	ignorePatterns = readInIgnorePatterns()
 
 	// have the db conx global allows multiple dbHandler routines to share it if necessary
 	db, err = initDb()
@@ -87,14 +106,12 @@ func Index(numIndexers int) {
 	}
 	defer db.Close()
 
-	
 	dbChan := make(chan dbTask, 32)       // to send requests to the DbHandler
 	dirChan := make(chan fsentry.E, 8192) // to enqueue new dirs to search (shared by indexers)
 	doneChan := make(chan int)            // for indexers to signal 'done' to main thread
 
 	// launch a single dbHandler goroutine
 	go dbHandler(db, dbChan)
-
 
 	/* ---[ First deal with toplevel entries ]--- */
 
@@ -107,16 +124,22 @@ func Index(numIndexers int) {
 	}
 
 	/* ---[ Kick off the indexers ]--- */
-	
+
 	for i := 0; i < nindexers; i++ {
-		go indexer(i, dirChan, dbChan, doneChan)
+		materiel := &indexerMateriel{idxNum: i,
+			ignorePatterns: ignorePatterns,
+			dirChan:        dirChan,
+			dbChan:         dbChan,
+			doneChan:       doneChan,
+		}
+		go indexer(materiel)
 	}
 
 	/* ---[ The master thread waits for the indexers to finish ]--- */
 
 	countDownLatch := nindexers
 	for ; countDownLatch > 0; countDownLatch-- {
-		idxNum := <- doneChan
+		idxNum := <-doneChan
 		prf("Indexer #%d is done\n", idxNum)
 	}
 
@@ -138,26 +161,25 @@ func initDb() (*sql.DB, error) {
 	return sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
 }
 
-
 //
 // indexer runs in its own goroutine
 // ... MORE HERE ...
 //
-func indexer(idxNum int, dirChan chan fsentry.E, dbChan chan dbTask, doneChan chan int) {
+func indexer(mt *indexerMateriel) {
 	var nextEntry fsentry.E
-	misses := 0  // num times have read from dirChan and "missed" (timed out)
-	             // when miss twice in a row, then send q done note on the doneChan and exit
-	replyChan := make(chan dbReply, 16)
+	misses := 0 // num times have read from dirChan and "missed" (timed out)
+	// when miss twice in a row, then send q done note on the doneChan and exit
+	mt.replyChan = make(chan dbReply, 16)
 	maxMisses := 2
 
 	for misses < maxMisses {
 		select {
-		case nextEntry = <- dirChan:
+		case nextEntry = <-mt.dirChan:
 			misses = 0
-			err := indexEntry(nextEntry, dirChan, dbChan, replyChan)
+			err := indexEntry(nextEntry, mt)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
-				doneChan <- idxNum
+				mt.doneChan <- mt.idxNum
 				return
 			}
 
@@ -169,26 +191,26 @@ func indexer(idxNum int, dirChan chan fsentry.E, dbChan chan dbTask, doneChan ch
 		}
 	}
 
-	doneChan <- idxNum
+	mt.doneChan <- mt.idxNum
 }
 
 //
 // direntry should be a fsentry with typ = fsentry.DIR
 //
 //
-func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, replyChan chan dbReply) error {
+func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 	prf("QUERY sent to dbHandler for: %v\n", direntry)
-	dbChan <- dbTask{QUERY, direntry, replyChan}
+	mt.dbChan <- dbTask{QUERY, direntry, mt.replyChan}
 
 	var fsentries []fsentry.E
-	fsentries, err := scanDir(direntry)
+	fsentries, err := scanDir(direntry, mt.ignorePatterns)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir %v: %v\n", direntry.Path, err)
 		return err
 	}
 
 	prf("Attempting to get QUERY results from dbChan for: %v\n", direntry)
-	reply := <- replyChan
+	reply := <-mt.replyChan
 	prf("Reply is: %v\n", reply)
 	if reply.err != nil {
 		fmt.Fprintf(os.Stderr, "Error while reading from the database: %v\n", err)
@@ -204,18 +226,18 @@ func indexEntry(direntry fsentry.E, dirChan chan fsentry.E, dbChan chan dbTask, 
 	prf("fsrecSets: %v\n", fsrecsSet)
 	prf("dbonly: %v\n", dbonly)
 	prf("fsonly: %v\n", fsonly)
-	
+
 	N := len(fsonly) + len(dbonly)
 	tmpReplyChan := make(chan dbReply, N)
 	for entry, _ := range dbonly {
-		dbChan <- dbTask{DELETE, entry, tmpReplyChan}
+		mt.dbChan <- dbTask{DELETE, entry, tmpReplyChan}
 	}
 
 	for entry, _ := range fsonly {
-		dbChan <- dbTask{INSERT, entry, tmpReplyChan}
+		mt.dbChan <- dbTask{INSERT, entry, tmpReplyChan}
 
 		if entry.Typ == fsentry.DIR && entry.Path != direntry.Path {
-			putOnDirChan(entry, dirChan)
+			putOnDirChan(entry, mt.dirChan)
 		}
 	}
 
@@ -245,7 +267,7 @@ func checkErrorsOnDbReplies(replyChan chan dbReply, numExp int) error {
 func putOnDirChan(entry fsentry.E, dirChan chan fsentry.E) {
 	// putting onto dirChan could hang if dirChan fills up, so do a non-blocking put
 	select {
-	case dirChan <-entry:
+	case dirChan <- entry:
 	default:
 		// TODO: when the put fails, need to have a backup signaling channel to the
 		// main thead to start more indexers
@@ -256,9 +278,8 @@ func putOnDirChan(entry fsentry.E, dirChan chan fsentry.E) {
 
 //
 // direntry should be a fsentry.E with Typ = DIR
-// TODO: can this be merged with the orig scanDir ??
 //
-func scanDir(direntry fsentry.E) (entries []fsentry.E, err error) {
+func scanDir(direntry fsentry.E, ignore stringset.Set) (entries []fsentry.E, err error) {
 	var lsFileInfo []os.FileInfo
 	entries = make([]fsentry.E, 1, 4)
 	entries[0] = direntry
@@ -266,18 +287,34 @@ func scanDir(direntry fsentry.E) (entries []fsentry.E, err error) {
 	prf("Scanning %v for files\n", direntry.Path)
 	lsFileInfo, err = ioutil.ReadDir(direntry.Path)
 	if err != nil {
-        return
+		return
 	}
 
 	for _, finfo := range lsFileInfo {
+		abspath := direntry.Path + "/" + finfo.Name()
+		if shouldIgnore(ignore, abspath, finfo.Name()) {
+			continue
+		}
 		enttyp := fsentry.FILE
 		if finfo.IsDir() {
 			enttyp = fsentry.DIR
 		}
 		// TODO: check if should skipDir (based on ignore patterns)
-		entries = append(entries, fsentry.E{Path: direntry.Path + "/" + finfo.Name(), Typ: enttyp})
+		entries = append(entries, fsentry.E{Path: abspath, Typ: enttyp})
 	}
 	return entries, nil
+}
+
+func shouldIgnore(ignore stringset.Set, abspath, fname string) bool {
+	if ignore.Contains(abspath) {
+		return true
+	}
+	for pat := range ignore {
+		if fname == pat || strings.Contains(abspath, pat) {
+			return true
+		}
+	}
+	return false
 }
 
 //
@@ -452,6 +489,10 @@ func fileExists(fpath string) bool {
 	return err == nil
 }
 
+//
+// Reads in the ingore patterns from IGNORE_FILE
+// and returns the entries as a stringset.Set
+//
 func readInIgnorePatterns() stringset.Set {
 	ignoreFilePath := IGNORE_FILE
 	ignorePatterns := stringset.Set{}
@@ -472,7 +513,7 @@ func readInIgnorePatterns() stringset.Set {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		ln := strings.TrimSpace(scanner.Text())
-		if len(ln) != 0 {
+		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
 			ignorePatterns.Add(ln)
 		}
 	}
@@ -482,6 +523,8 @@ func readInIgnorePatterns() stringset.Set {
 	}
 	return ignorePatterns
 }
+
+/* ---[ Helper print fns that only print if verbose=true ]--- */
 
 func pr(s string) {
 	if verbose {
