@@ -8,4 +8,14 @@
 .git/
 .svn/
 .hg/
+.cache/
+.mozilla/
+.gem/
+.visualvm/
+.macromedia/
+.config/
+.adobe/
+.npm/
+.java/
+.rvm/
 

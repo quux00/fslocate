@@ -6,9 +6,9 @@ import (
 
 func TestNewWithStringSlice(t *testing.T) {
 	lsEntries := []E{
-		{path: "/usr/local/foo",     typ: DIR},
-		{path: "/usr/local/foo/bar", typ: FILE},
-		{path: "/usr/local/foo/qux", typ: FILE},
+		E{Path: "/usr/local/foo",     Typ: DIR},
+		E{Path: "/usr/local/foo/bar", Typ: FILE},
+		E{Path: "/usr/local/foo/qux", Typ: FILE},
 	}
 	set := NewSet(lsEntries...)
 
@@ -27,11 +27,11 @@ func TestAdd(t *testing.T) {
 	}
 
 	lsEntries := []E{
-		{path: "/usr/local/foo",     typ: DIR},
-		{path: "/usr/local/foo",     typ: FILE},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: true},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: false},
-		{path: "/usr/local/foo/qux", typ: FILE},
+		{Path: "/usr/local/foo",     Typ: DIR},
+		{Path: "/usr/local/foo",     Typ: FILE},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: true},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: false},
+		{Path: "/usr/local/foo/qux", Typ: FILE},
 	}
 
 	set.Add(lsEntries[0])
@@ -53,11 +53,11 @@ func TestAdd(t *testing.T) {
 
 func TestContains(t *testing.T) {
 	lsEntries := []E{
-		{path: "/usr/local/foo",     typ: DIR},
-		{path: "/usr/local/foo",     typ: FILE},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: true},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: false},
-		{path: "/usr/local/foo/qux", typ: FILE},
+		{Path: "/usr/local/foo",     Typ: DIR},
+		{Path: "/usr/local/foo",     Typ: FILE},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: true},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: false},
+		{Path: "/usr/local/foo/qux", Typ: FILE},
 	}
 	set := NewSet(lsEntries...)
 
@@ -67,7 +67,7 @@ func TestContains(t *testing.T) {
 		}
 	}
 
-	ent := E{path: "/var/log/foo", typ: FILE}
+	ent := E{Path: "/var/log/foo", Typ: FILE}
 	if set.Contains(ent) {
 		t.Errorf("should not contain: %v", ent)
 	}
@@ -75,18 +75,18 @@ func TestContains(t *testing.T) {
 
 func TestDifferenceBothListsHaveUniqueEntries(t *testing.T) {
 	ls1 := []E{
-		{path: "/usr/local/foo",     typ: DIR},
-		{path: "/usr/local/foo",     typ: FILE},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: true},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: false},
-		{path: "/usr/local/foo/qux", typ: FILE},
+		{Path: "/usr/local/foo",     Typ: DIR},
+		{Path: "/usr/local/foo",     Typ: FILE},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: true},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: false},
+		{Path: "/usr/local/foo/qux", Typ: FILE},
 	}
 
 	ls2 := []E{
-		{path: "/usr/local/foo",     typ: DIR},
-		{path: "/usr/local/foo/qux", typ: FILE},
-		{path: "/var/log/foo", typ: DIR},
-		{path: "/var/log/foo/bar", typ: FILE},
+		{Path: "/usr/local/foo",     Typ: DIR},
+		{Path: "/usr/local/foo/qux", Typ: FILE},
+		{Path: "/var/log/foo", Typ: DIR},
+		{Path: "/var/log/foo/bar", Typ: FILE},
 	}
 
 	set1 := NewSet(ls1...)
@@ -95,9 +95,9 @@ func TestDifferenceBothListsHaveUniqueEntries(t *testing.T) {
 	// diff ls1 => ls2
 
 	exp12 := []E{
-		{path: "/usr/local/foo",     typ: FILE},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: true},
-		{path: "/usr/local/foo/bar", typ: FILE, isTopLevel: false},
+		{Path: "/usr/local/foo",     Typ: FILE},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: true},
+		{Path: "/usr/local/foo/bar", Typ: FILE, IsTopLevel: false},
 	}
 
 	diffSet := set1.Difference(set2)
@@ -119,8 +119,8 @@ func TestDifferenceBothListsHaveUniqueEntries(t *testing.T) {
 	// diff ls2 => ls1
 
 	exp21 := []E{
-		{path: "/var/log/foo", typ: DIR},
-		{path: "/var/log/foo/bar", typ: FILE},
+		{Path: "/var/log/foo", Typ: DIR},
+		{Path: "/var/log/foo/bar", Typ: FILE},
 	}
 
 	diffSet = set2.Difference(set1)
