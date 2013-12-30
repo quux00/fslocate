@@ -28,19 +28,20 @@
 // * TODO: write test (manual or unit) that puts stuff in the db that is not on the fs
 // * TODO: when the put fails, need to have a backup signaling channel to the
 //         main thead to start more indexers for now just log in the issue (in putOnDirChan fn)
-// 
+//
 //
 package main
 
 import (
 	"bufio"
+	"bytes"
 	"database/sql"
 	"fmt"
 	"fslocate/fsentry"
-	"fslocate/stringset"
 	_ "github.com/bmizerany/pq"
 	"io/ioutil"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -75,12 +76,12 @@ type dbReply struct {
 
 // the tools needed by the indexer to do its job
 type indexerMateriel struct {
-	idxNum         int
-	ignorePatterns stringset.Set
-	dirChan        chan fsentry.E
-	dbChan         chan dbTask
-	doneChan       chan int
-	replyChan      chan dbReply
+	idxNum    int
+	ignoreFns []func(string) bool
+	dirChan   chan fsentry.E
+	dbChan    chan dbTask
+	doneChan  chan int
+	replyChan chan dbReply
 }
 
 /* ---[ FUNCTIONS ]--- */
@@ -91,12 +92,12 @@ func Index(numIndexers int) {
 	prf("Using %v indexer(s)\n", nindexers)
 
 	var (
-		err            error
-		ignorePatterns stringset.Set
-		db             *sql.DB // safe for concurrent use by multiple goroutines
+		err       error
+		ignoreFns []func(string) bool
+		db        *sql.DB // safe for concurrent use by multiple goroutines
 	)
 
-	ignorePatterns = readInIgnorePatterns()
+	ignoreFns = readInIgnorePatterns()
 
 	// have the db conx global allows multiple dbHandler routines to share it if necessary
 	db, err = initDb()
@@ -127,10 +128,10 @@ func Index(numIndexers int) {
 
 	for i := 0; i < nindexers; i++ {
 		materiel := &indexerMateriel{idxNum: i,
-			ignorePatterns: ignorePatterns,
-			dirChan:        dirChan,
-			dbChan:         dbChan,
-			doneChan:       doneChan,
+			ignoreFns: ignoreFns,
+			dirChan:   dirChan,
+			dbChan:    dbChan,
+			doneChan:  doneChan,
 		}
 		go indexer(materiel)
 	}
@@ -203,7 +204,7 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 	mt.dbChan <- dbTask{QUERY, direntry, mt.replyChan}
 
 	var fsentries []fsentry.E
-	fsentries, err := scanDir(direntry, mt.ignorePatterns)
+	fsentries, err := scanDir(direntry, mt.ignoreFns)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir %v: %v\n", direntry.Path, err)
 		return err
@@ -279,7 +280,7 @@ func putOnDirChan(entry fsentry.E, dirChan chan fsentry.E) {
 //
 // direntry should be a fsentry.E with Typ = DIR
 //
-func scanDir(direntry fsentry.E, ignore stringset.Set) (entries []fsentry.E, err error) {
+func scanDir(direntry fsentry.E, ignoreFns []func(string) bool) (entries []fsentry.E, err error) {
 	var lsFileInfo []os.FileInfo
 	entries = make([]fsentry.E, 1, 4)
 	entries[0] = direntry
@@ -292,25 +293,26 @@ func scanDir(direntry fsentry.E, ignore stringset.Set) (entries []fsentry.E, err
 
 	for _, finfo := range lsFileInfo {
 		abspath := direntry.Path + "/" + finfo.Name()
-		if shouldIgnore(ignore, abspath, finfo.Name()) {
+		if shouldIgnore(ignoreFns, abspath) {
 			continue
 		}
 		enttyp := fsentry.FILE
 		if finfo.IsDir() {
 			enttyp = fsentry.DIR
 		}
-		// TODO: check if should skipDir (based on ignore patterns)
 		entries = append(entries, fsentry.E{Path: abspath, Typ: enttyp})
 	}
 	return entries, nil
 }
 
-func shouldIgnore(ignore stringset.Set, abspath, fname string) bool {
-	if ignore.Contains(abspath) {
-		return true
-	}
-	for pat := range ignore {
-		if fname == pat || strings.Contains(abspath, pat) {
+//
+// Uses the ignore patterns to determine if the file/dir passed in should
+// not be indexed. The full path (abspath) is checked as a pure string match first.
+// If that is not found in the ignore patterns, then a regex based search is done (??)
+//
+func shouldIgnore(ignoreFns []func(string) bool, abspath string) bool {
+	for _, fn := range ignoreFns {
+		if fn(abspath) {
 			return true
 		}
 	}
@@ -493,20 +495,19 @@ func fileExists(fpath string) bool {
 // Reads in the ingore patterns from IGNORE_FILE
 // and returns the entries as a stringset.Set
 //
-func readInIgnorePatterns() stringset.Set {
+func readInIgnorePatterns() (ignoreFns []func(string) bool) {
 	ignoreFilePath := IGNORE_FILE
-	ignorePatterns := stringset.Set{}
 
 	if !fileExists(ignoreFilePath) {
 		fmt.Fprintf(os.Stderr,
 			"WARN: Unable to find ignore patterns file: %v\n", ignoreFilePath)
-		return ignorePatterns
+		return ignoreFns
 	}
 
 	file, err := os.Open(ignoreFilePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", ignoreFilePath)
-		return ignorePatterns
+		return ignoreFns
 	}
 	defer file.Close()
 
@@ -514,14 +515,71 @@ func readInIgnorePatterns() stringset.Set {
 	for scanner.Scan() {
 		ln := strings.TrimSpace(scanner.Text())
 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-			ignorePatterns.Add(ln)
+			ignoreFns = append(ignoreFns, createPatternFunc(ln))
 		}
 	}
 
 	if err = scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", ignoreFilePath, err)
 	}
-	return ignorePatterns
+	return ignoreFns
+}
+
+// func readInIgnorePatterns2() (patternFns []func(string) bool) {
+// 	/// ...
+// 	scanner := bufio.NewScanner(file)
+// 	for scanner.Scan() {
+// 		ln := strings.TrimSpace(scanner.Text())
+// 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
+// 			patternFns = append(patternFns, createPatternFunc(ln))
+// 			ignoreFns.Add(ln)
+// 		}
+// 	}
+// 	/// ...
+// }
+
+func createPatternFunc(s string) func(string) bool {
+	if strings.HasPrefix(s, "*") {
+		rx := regexp.MustCompile(fmt.Sprintf(".%s$", regexEscape(s)))
+		return func(path string) bool {
+			return rx.MatchString(path)
+		}
+	}
+	if strings.HasSuffix(s, "/") || strings.HasSuffix(s, "/*") {
+		dirname := strings.TrimSuffix(strings.TrimSuffix(s, "*"), "/")
+		rx := regexp.MustCompile(fmt.Sprintf("%s/.*", regexEscape(removeStarSuffix(s))))
+		return func(path string) bool {
+			return strings.HasSuffix(path, dirname) || rx.MatchString(path)
+		}
+	}
+	rx := regexp.MustCompile( regexEscape(s) )
+	return func(path string) bool {
+		return rx.MatchString(path)
+	}
+}
+
+func removeStarSuffix(s string) string {
+	if strings.HasSuffix(s, "*") {
+		return s[:len(s)-1]
+	}
+	return s
+}
+
+//
+// Escapes (with backslash) chars that have special meaning in a regex
+//
+func regexEscape(s string) string {
+	var buf bytes.Buffer
+	buf.Grow(len(s) + 4)
+	for _, char := range s {
+		if char == '.' || char == '*' || char == '+' || char == '$' ||
+			char == '(' || char == ')' || char == '[' || char == ']' {
+
+			buf.WriteRune('\\')
+		}
+		buf.WriteRune(char)
+	}
+	return buf.String()
 }
 
 /* ---[ Helper print fns that only print if verbose=true ]--- */

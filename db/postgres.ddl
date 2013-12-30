@@ -7,4 +7,6 @@ CREATE TABLE fsentry (
   toplevel bool
 );
 ALTER TABLE fsentry ADD UNIQUE (path);
+
 CREATE INDEX ON fsentry (path);
+CREATE INDEX ON fsentry ((lower(path)));        

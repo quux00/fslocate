@@ -12,6 +12,63 @@ import (
 )
 
 
+func TestRemoveStarSuffix(t *testing.T) {
+	s1 := ""
+	s2 := "a"
+	s3 := "*"
+	s4 := "a*"
+	s5 := "abc/*"
+
+	if removeStarSuffix(s1) != s1 {
+		t.Errorf( removeStarSuffix(s1) )
+	}
+	
+	if removeStarSuffix(s2) != s2 {
+		t.Errorf( removeStarSuffix(s2) )
+	}
+	
+	if removeStarSuffix(s3) != "" {
+		t.Errorf( removeStarSuffix(s3) )
+	}
+	
+	if removeStarSuffix(s4) != "a" {
+		t.Errorf( removeStarSuffix(s4) )
+	}
+	
+	if removeStarSuffix(s5) != "abc/" {
+		t.Errorf( removeStarSuffix(s5) )
+	}
+	
+}
+
+func TestRegexEscape(t *testing.T) {
+	s1 := "*.class"
+	s2 := "hi[mom]"
+	s3 := "f$y.class"
+	s4 := "xxx"
+	s5 := ""
+	s6 := "()"
+
+	if regexEscape(s1) != `\*\.class` {
+		t.Errorf( regexEscape(s1) )
+	}
+	if regexEscape(s2) != `hi\[mom\]` {
+		t.Errorf( regexEscape(s2) )
+	}
+	if regexEscape(s3) != `f\$y\.class` {
+		t.Errorf( regexEscape(s3) )
+	}
+	if regexEscape(s4) != `xxx` {
+		t.Errorf( regexEscape(s4) )
+	}
+	if regexEscape(s5) != `` {
+		t.Errorf( regexEscape(s5) )
+	}
+	if regexEscape(s6) != `\(\)` {
+		t.Errorf( regexEscape(s6) )
+	}
+}
+
 func TestDbHandlerInsertAndDelete(t *testing.T) {
 	var (
 		db *sql.DB
@@ -67,7 +124,7 @@ func TestIndexerShouldMessageDoneAndShutDownIfNothingOnDirChan(t *testing.T) {
 	dbChan   := make(chan dbTask, 1)
 	doneChan := make(chan int, 1)
 
-	go indexer(1, dirChan, dbChan, doneChan)
+	go indexer(&indexerMateriel{idxNum: 1, dirChan: dirChan, dbChan: dbChan, doneChan: doneChan})
 
 	select {
 	case idx := <- doneChan:
@@ -118,8 +175,9 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 
 	// now start up the handler and indexer in goroutines
 	go dbHandler(db, dbChan)
-	go indexer(100, dirChan, dbChan, doneChan)
+	go indexer(&indexerMateriel{idxNum: 100, dirChan: dirChan, dbChan: dbChan, doneChan: doneChan})
 
+	
 	// wait for indexer to finish work on the one entry in dirChan
 	idx := <- doneChan
 	if idx != 100 { t.Errorf("idx wrong: %d", idx) }
