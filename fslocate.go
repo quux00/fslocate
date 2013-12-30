@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	. "fmt"
-	"strings"
 	"os"
+	"strings"
 )
 
 const DEFAULT_NUM_INDEXERS = 3
@@ -27,7 +27,7 @@ func main() {
 	flag.Parse()
 
 	if !doIndexing && numIndexers != DEFAULT_NUM_INDEXERS {
-		Fprintf(os.Stderr, "ERROR: cannot specify -t without the -i (indexing) flag\n", )
+		Fprintf(os.Stderr, "ERROR: cannot specify -t without the -i (indexing) flag\n")
 		os.Exit(1)
 	}
 	if doIndexing {
@@ -43,7 +43,7 @@ func getSearchTerm(args []string) string {
 		Fprintln(os.Stderr, "ERROR: No search term provided")
 		os.Exit(1)
 	}
-	return nonflagArgs[ len(nonflagArgs)-1 ]
+	return nonflagArgs[len(nonflagArgs)-1]
 }
 
 func removeFlags(args []string) []string {
@@ -56,7 +56,7 @@ func removeFlags(args []string) []string {
 	return nonflags
 }
 
-func checkArgs()  {
+func checkArgs() {
 	if len(os.Args) < 2 {
 		Println("ERROR: no command line args provided")
 		help()
@@ -67,7 +67,6 @@ func checkArgs()  {
 		os.Exit(0)
 	}
 }
-
 
 func help() {
 	Println("Usage: [-hv] [-t NUM] fslocate search-term | -i")

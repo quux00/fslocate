@@ -552,7 +552,7 @@ func createPatternFunc(s string) func(string) bool {
 			return strings.HasSuffix(path, dirname) || rx.MatchString(path)
 		}
 	}
-	rx := regexp.MustCompile( regexEscape(s) )
+	rx := regexp.MustCompile(regexEscape(s))
 	return func(path string) bool {
 		return rx.MatchString(path)
 	}

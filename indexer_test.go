@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-
 func TestRemoveStarSuffix(t *testing.T) {
 	s1 := ""
 	s2 := "a"
@@ -20,25 +19,25 @@ func TestRemoveStarSuffix(t *testing.T) {
 	s5 := "abc/*"
 
 	if removeStarSuffix(s1) != s1 {
-		t.Errorf( removeStarSuffix(s1) )
+		t.Errorf(removeStarSuffix(s1))
 	}
-	
+
 	if removeStarSuffix(s2) != s2 {
-		t.Errorf( removeStarSuffix(s2) )
+		t.Errorf(removeStarSuffix(s2))
 	}
-	
+
 	if removeStarSuffix(s3) != "" {
-		t.Errorf( removeStarSuffix(s3) )
+		t.Errorf(removeStarSuffix(s3))
 	}
-	
+
 	if removeStarSuffix(s4) != "a" {
-		t.Errorf( removeStarSuffix(s4) )
+		t.Errorf(removeStarSuffix(s4))
 	}
-	
+
 	if removeStarSuffix(s5) != "abc/" {
-		t.Errorf( removeStarSuffix(s5) )
+		t.Errorf(removeStarSuffix(s5))
 	}
-	
+
 }
 
 func TestRegexEscape(t *testing.T) {
@@ -50,28 +49,28 @@ func TestRegexEscape(t *testing.T) {
 	s6 := "()"
 
 	if regexEscape(s1) != `\*\.class` {
-		t.Errorf( regexEscape(s1) )
+		t.Errorf(regexEscape(s1))
 	}
 	if regexEscape(s2) != `hi\[mom\]` {
-		t.Errorf( regexEscape(s2) )
+		t.Errorf(regexEscape(s2))
 	}
 	if regexEscape(s3) != `f\$y\.class` {
-		t.Errorf( regexEscape(s3) )
+		t.Errorf(regexEscape(s3))
 	}
 	if regexEscape(s4) != `xxx` {
-		t.Errorf( regexEscape(s4) )
+		t.Errorf(regexEscape(s4))
 	}
 	if regexEscape(s5) != `` {
-		t.Errorf( regexEscape(s5) )
+		t.Errorf(regexEscape(s5))
 	}
 	if regexEscape(s6) != `\(\)` {
-		t.Errorf( regexEscape(s6) )
+		t.Errorf(regexEscape(s6))
 	}
 }
 
 func TestDbHandlerInsertAndDelete(t *testing.T) {
 	var (
-		db *sql.DB
+		db  *sql.DB
 		err error
 	)
 
@@ -92,46 +91,45 @@ func TestDbHandlerInsertAndDelete(t *testing.T) {
 
 	// ask handler to do insert
 	dbChan <- dbTask{INSERT, fse, replyChan}
-	reply = <- replyChan
+	reply = <-replyChan
 	if reply.err != nil {
 		t.Errorf("reply.err is not nil: %v", reply.err)
 	}
 
 	// Now query that new entry
 	dbChan <- dbTask{QUERY, fse, replyChan}
-	reply = <- replyChan
+	reply = <-replyChan
 	if len(reply.fsentries) != 1 {
 		t.Errorf("reply.fsentries len: %v", len(reply.fsentries))
 	}
 	if reply.fsentries[0].Path != fse.Path {
 		t.Errorf("paths don't match: %v", reply.fsentries[0].Path)
 	}
-	
+
 	// Now delete that entry
 	dbChan <- dbTask{DELETE, fse, replyChan}
-	reply = <- replyChan
+	reply = <-replyChan
 	if reply.err != nil {
 		t.Errorf("reply.err is not nil: %v", reply.err)
 	}
 
 	dbChan <- dbTask{action: QUIT, replyChan: replyChan}
-	<- replyChan
+	<-replyChan
 }
 
-
 func TestIndexerShouldMessageDoneAndShutDownIfNothingOnDirChan(t *testing.T) {
-	dirChan  := make(chan fsentry.E, 10)
-	dbChan   := make(chan dbTask, 1)
+	dirChan := make(chan fsentry.E, 10)
+	dbChan := make(chan dbTask, 1)
 	doneChan := make(chan int, 1)
 
 	go indexer(&indexerMateriel{idxNum: 1, dirChan: dirChan, dbChan: dbChan, doneChan: doneChan})
 
 	select {
-	case idx := <- doneChan:
+	case idx := <-doneChan:
 		if idx != 1 {
 			t.Errorf("Index: %d\n", idx)
 		}
-	case <- time.After(2 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Error("indexer go routine did not respond with 'Done' in alloted time")
 	}
 }
@@ -140,9 +138,9 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 	/* ---[ SET UP ]--- */
 
 	// create channels
-	dirChan   := make(chan fsentry.E, 5)
-	dbChan    := make(chan dbTask, 1)
-	doneChan  := make(chan int, 1)
+	dirChan := make(chan fsentry.E, 5)
+	dbChan := make(chan dbTask, 1)
+	doneChan := make(chan int, 1)
 	replyChan := make(chan dbReply, 1)
 
 	// initialize conx to the db
@@ -177,12 +175,13 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 	go dbHandler(db, dbChan)
 	go indexer(&indexerMateriel{idxNum: 100, dirChan: dirChan, dbChan: dbChan, doneChan: doneChan})
 
-	
 	// wait for indexer to finish work on the one entry in dirChan
-	idx := <- doneChan
-	if idx != 100 { t.Errorf("idx wrong: %d", idx) }
+	idx := <-doneChan
+	if idx != 100 {
+		t.Errorf("idx wrong: %d", idx)
+	}
 
-	if ! presentInDb(db, dirpath, lsFiles) {
+	if !presentInDb(db, dirpath, lsFiles) {
 		t.Errorf("Test dir and files are NOT in the database when should be: %v, %v",
 			dirpath, lsFiles)
 		return
@@ -190,18 +189,22 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 
 	for _, f := range lsFiles {
 		f, err = filepath.Abs(f)
-		if err != nil { panic(err) }
+		if err != nil {
+			panic(err)
+		}
 		fse := fsentry.E{Path: f, Typ: fsentry.FILE}
 		dbChan <- dbTask{DELETE, fse, replyChan}
-		reply := <- replyChan
-		if reply.err != nil { t.Errorf("Unable to delete %v", f) }
+		reply := <-replyChan
+		if reply.err != nil {
+			t.Errorf("Unable to delete %v", f)
+		}
 	}
 
 	dbChan <- dbTask{DELETE, direntry, replyChan}
-	<- replyChan
+	<-replyChan
 
 	dbChan <- dbTask{action: QUIT, replyChan: replyChan}
-	<- replyChan
+	<-replyChan
 
 	err = os.RemoveAll(dirpath)
 	if err != nil {
@@ -209,10 +212,7 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 	}
 }
 
-
-
 /* ---[ Helper Fns ]--- */
-
 
 func presentInDb(db *sql.DB, dirpath string, lsFiles []string) bool {
 	stmt, err := db.Prepare("SELECT count(*) FROM fsentry WHERE path = $1")
@@ -268,5 +268,5 @@ func createTempDirWithFiles() (dirpath string, lsFiles []string) {
 	ioutil.WriteFile(tmpFile2, []byte("f2"), 0777)
 	ioutil.WriteFile(tmpFile3, []byte("f3"), 0777)
 
-	return dirpath, []string{tmpFile1, tmpFile2, tmpFile3,}
+	return dirpath, []string{tmpFile1, tmpFile2, tmpFile3}
 }

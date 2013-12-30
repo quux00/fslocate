@@ -21,7 +21,7 @@ func Search(term string) {
 		return
 	}
 	defer st.Close()
-	
+
 	r, err := st.Query()
 	if err != nil {
 		fmt.Println(err)

@@ -12,18 +12,18 @@ import (
 )
 
 type TopLevelInfo struct {
-	dirChan chan fsentry.E
-	dbChan chan dbTask
+	dirChan        chan fsentry.E
+	dbChan         chan dbTask
 	configFilePath string
 }
 
 //
-// syncTopLevelEntries is the main entry point for handling 
+// syncTopLevelEntries is the main entry point for handling
 // "toplevel" entries in the database and the user's config file.
 // This method reads in the user config file of the directories
 // to index, sync it to what top level entries are the database
-// (which might require delete entries from the DB) and putting 
-// the dirs to search on the dbChan and the entries to delete 
+// (which might require delete entries from the DB) and putting
+// the dirs to search on the dbChan and the entries to delete
 // from the db on the dbChan for the goroutines to process.
 //
 // When called the dbHandler goroutine should already be running,
@@ -32,7 +32,7 @@ type TopLevelInfo struct {
 //
 func syncTopLevelEntries(db *sql.DB, params TopLevelInfo) error {
 	var (
-		err error
+		err          error
 		topIndexDirs []string
 	)
 
@@ -87,13 +87,13 @@ func readInTopLevelIndexDirs(configFilePath string) ([]string, error) {
 	indexDirsPath := configFilePath
 	var indexDirs []string
 
-	if ! fileExists(indexDirsPath) {
+	if !fileExists(indexDirsPath) {
 		return indexDirs, fmt.Errorf("Unable to find conf file: %v\n", indexDirsPath)
 	}
 
-    file, err := os.Open(indexDirsPath)
-    if err != nil {
-        return indexDirs, err
+	file, err := os.Open(indexDirsPath)
+	if err != nil {
+		return indexDirs, err
 	}
 	defer file.Close()
 
@@ -106,12 +106,11 @@ func readInTopLevelIndexDirs(configFilePath string) ([]string, error) {
 	}
 
 	if err = scanner.Err(); err != nil {
-        return indexDirs, err
+		return indexDirs, err
 	}
 
 	return indexDirs, nil
 }
-
 
 //
 // Returns ls of all paths in the database that are marked as toplevel
@@ -134,7 +133,6 @@ func toplevelDirsInDb(db *sql.DB) (dbIndexDirs []string, err error) {
 
 	return dbIndexDirs, nil
 }
-
 
 //
 // pathsToDeleteInDb determines what "top level" entries to delete
