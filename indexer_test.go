@@ -118,7 +118,7 @@ func TestDbHandlerInsertAndDelete(t *testing.T) {
 }
 
 func TestIndexerShouldMessageDoneAndShutDownIfNothingOnDirChan(t *testing.T) {
-	dirChan := make(chan fsentry.E, 10)
+	dirChan := make(chan []fsentry.E, 10)
 	dbChan := make(chan dbTask, 1)
 	doneChan := make(chan int, 1)
 
@@ -138,7 +138,7 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 	/* ---[ SET UP ]--- */
 
 	// create channels
-	dirChan := make(chan fsentry.E, 5)
+	dirChan := make(chan []fsentry.E, 5)
 	dbChan := make(chan dbTask, 1)
 	doneChan := make(chan int, 1)
 	replyChan := make(chan dbReply, 1)
@@ -169,7 +169,7 @@ func TestIndexerOneEntryOnDirChan(t *testing.T) {
 
 	// put one entry on the dirChan for the indexer to process
 	direntry := fsentry.E{Path: dirpath, Typ: fsentry.DIR}
-	dirChan <- direntry
+	dirChan <- []fsentry.E{direntry}
 
 	// now start up the handler and indexer in goroutines
 	go dbHandler(db, dbChan)

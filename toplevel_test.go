@@ -37,7 +37,7 @@ func TestSyncTopLevelEntries(t *testing.T) {
 	populateTestDb(db)
 
 	dbChan := make(chan dbTask, 5)
-	dirChan := make(chan fsentry.E, 10)
+	dirChan := make(chan []fsentry.E, 10)
 	replyChan := make(chan dbReply, 1)
 	go dbHandler(db, dbChan)
 
@@ -53,8 +53,10 @@ func TestSyncTopLevelEntries(t *testing.T) {
 LOOP:
 	for len(entryPathsOnChan) < 2 {
 		select {
-		case entry := <-dirChan:
-			entryPathsOnChan = append(entryPathsOnChan, entry.Path)
+		case dirEntries := <-dirChan:
+			for _, entry := range dirEntries {
+				entryPathsOnChan = append(entryPathsOnChan, entry.Path)
+			}
 		case <-time.After(1500 * time.Millisecond):
 			t.Errorf("syncTopLevelEntries seems to not have enough entries on the dirChan: entries: %v", entryPathsOnChan)
 			break LOOP

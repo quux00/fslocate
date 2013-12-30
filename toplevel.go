@@ -12,7 +12,7 @@ import (
 )
 
 type TopLevelInfo struct {
-	dirChan        chan fsentry.E
+	dirChan        chan []fsentry.E
 	dbChan         chan dbTask
 	configFilePath string
 }
@@ -61,6 +61,7 @@ func syncTopLevelEntries(db *sql.DB, params TopLevelInfo) error {
 	}
 
 	// ensure that the top level conf index dirs exist and are dirs
+	var dirEntries []fsentry.E
 	for _, dir := range topIndexDirs {
 		prf("Checking if %v is a directory\n", dir)
 		if finfo, err := os.Stat(dir); err != nil {
@@ -68,9 +69,10 @@ func syncTopLevelEntries(db *sql.DB, params TopLevelInfo) error {
 		} else if !finfo.IsDir() {
 			return fmt.Errorf("ERROR: %v in in the config indexdir is not a directory", dir)
 		}
-		prf("Putting %v on dirChan\n", dir)
-		params.dirChan <- fsentry.E{dir, fsentry.DIR, true}
+		dirEntries = append(dirEntries, fsentry.E{dir, fsentry.DIR, true})
 	}
+	prf("Putting %v on dirChan\n", dirEntries)
+	params.dirChan <- dirEntries
 
 	return nil
 }

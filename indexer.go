@@ -78,7 +78,7 @@ type dbReply struct {
 type indexerMateriel struct {
 	idxNum    int
 	ignoreFns []func(string) bool
-	dirChan   chan fsentry.E
+	dirChan   chan []fsentry.E
 	dbChan    chan dbTask
 	doneChan  chan int
 	replyChan chan dbReply
@@ -107,9 +107,9 @@ func Index(numIndexers int) {
 	}
 	defer db.Close()
 
-	dbChan := make(chan dbTask, 32)       // to send requests to the DbHandler
-	dirChan := make(chan fsentry.E, 8192) // to enqueue new dirs to search (shared by indexers)
-	doneChan := make(chan int)            // for indexers to signal 'done' to main thread
+	dbChan := make(chan dbTask, 32)         // to send requests to the DbHandler
+	dirChan := make(chan []fsentry.E, 8192) // to enqueue new dirs to search (shared by indexers)
+	doneChan := make(chan int)              // for indexers to signal 'done' to main thread
 
 	// launch a single dbHandler goroutine
 	go dbHandler(db, dbChan)
@@ -167,7 +167,7 @@ func initDb() (*sql.DB, error) {
 // ... MORE HERE ...
 //
 func indexer(mt *indexerMateriel) {
-	var nextEntry fsentry.E
+	var nextEntries []fsentry.E
 	misses := 0 // num times have read from dirChan and "missed" (timed out)
 	// when miss twice in a row, then send q done note on the doneChan and exit
 	mt.replyChan = make(chan dbReply, 16)
@@ -175,13 +175,15 @@ func indexer(mt *indexerMateriel) {
 
 	for misses < maxMisses {
 		select {
-		case nextEntry = <-mt.dirChan:
+		case nextEntries = <-mt.dirChan:
 			misses = 0
-			err := indexEntry(nextEntry, mt)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				mt.doneChan <- mt.idxNum
-				return
+			for _, nextEntry := range nextEntries {
+				err := indexEntry(nextEntry, mt)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "%v\n", err)
+					mt.doneChan <- mt.idxNum
+					return
+				}
 			}
 
 		default:
@@ -234,11 +236,16 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 		mt.dbChan <- dbTask{DELETE, entry, tmpReplyChan}
 	}
 
+	var dirEntries []fsentry.E
 	for entry, _ := range fsonly {
 		mt.dbChan <- dbTask{INSERT, entry, tmpReplyChan}
 
 		if entry.Typ == fsentry.DIR && entry.Path != direntry.Path {
-			putOnDirChan(entry, mt.dirChan)
+			dirEntries = append(dirEntries, entry)
+		}
+		err = putOnDirChan(dirEntries, mt.dirChan)
+		if err != nil {
+			panic(err)  // TODO: shutdown gracefully
 		}
 	}
 
@@ -265,16 +272,18 @@ func checkErrorsOnDbReplies(replyChan chan dbReply, numExp int) error {
 	return nil
 }
 
-func putOnDirChan(entry fsentry.E, dirChan chan fsentry.E) {
+func putOnDirChan(dirEntries []fsentry.E, dirChan chan []fsentry.E) error {
+	if len(dirEntries) == 0 {
+		return nil
+	}
+
 	// putting onto dirChan could hang if dirChan fills up, so do a non-blocking put
 	select {
-	case dirChan <- entry:
+	case dirChan <- dirEntries:
 	default:
-		// TODO: when the put fails, need to have a backup signaling channel to the
-		// main thead to start more indexers
-		// for now just log in the issue
-		fmt.Fprintf(os.Stderr, "WARN: dir channel full! Dropped: %v\n", entry.Path)
+		return fmt.Errorf("Dir channel full! Dropped: %v\n", dirEntries)
 	}
+	return nil
 }
 
 //
@@ -324,10 +333,9 @@ func shouldIgnore(ignoreFns []func(string) bool, abspath string) bool {
 // the paths may have wildcards, since SQL is uses like not = to
 // select which rows to delete.
 //
-func dbDelete(delStmt *sql.Stmt, entry fsentry.E) error {
+func dbDelete(delOneStmt, delChildrenStmt *sql.Stmt, entry fsentry.E) error {
 	prf("Deleting: %v (type: %s)\n", entry.Path, entry.Typ)
-
-	res, err := delStmt.Exec(entry.Path, entry.Typ)
+	res, err := delOneStmt.Exec(entry.Path, entry.Typ)
 	if err != nil {
 		return err
 	}
@@ -338,6 +346,20 @@ func dbDelete(delStmt *sql.Stmt, entry fsentry.E) error {
 	// not checking row count
 	// because with the wildcards a parent with wildcard may delete a child
 	// and when the child delete stmt executes it doesn't delete anything
+
+	// if deleting a DIR, must also delete all its children => use wildcard
+	if entry.Typ == fsentry.DIR {
+		prf("Deleting: %v/% (children of deleted dir)\n", entry.Path)
+		res, err = delChildrenStmt.Exec(entry.Path + "/%")
+		if err != nil {
+			return err
+		}
+		_, err = res.RowsAffected()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -430,11 +452,17 @@ func dbInsert(insStmt *sql.Stmt, entry fsentry.E) error {
 // DOCUMENT ME!!
 //
 func dbHandler(db *sql.DB, dbChan chan dbTask) {
-	delStmt, err := db.Prepare("DELETE FROM fsentry WHERE path like $1 AND type = $2") // allows wildcards for path
+	delOneStmt, err := db.Prepare("DELETE FROM fsentry WHERE path = $1 AND type = $2")
 	if err != nil {
 		panic(err)
 	}
-	defer delStmt.Close()
+	defer delOneStmt.Close()
+
+	delChildrenStmt, err := db.Prepare("DELETE FROM fsentry WHERE path like $1") // allows wildcards for path
+	if err != nil {
+		panic(err)
+	}
+	defer delChildrenStmt.Close()
 
 	insStmt, err := db.Prepare("INSERT INTO fsentry (path, type, toplevel) VALUES($1, $2, $3)")
 	if err != nil {
@@ -473,7 +501,7 @@ MAINLOOP:
 
 		case DELETE:
 			prf(">> dbHandler DELETING: %v\n", task.entry)
-			err = dbDelete(delStmt, task.entry)
+			err = dbDelete(delOneStmt, delChildrenStmt, task.entry)
 			task.replyChan <- dbReply{err: err}
 
 		case QUIT:
@@ -525,19 +553,9 @@ func readInIgnorePatterns() (ignoreFns []func(string) bool) {
 	return ignoreFns
 }
 
-// func readInIgnorePatterns2() (patternFns []func(string) bool) {
-// 	/// ...
-// 	scanner := bufio.NewScanner(file)
-// 	for scanner.Scan() {
-// 		ln := strings.TrimSpace(scanner.Text())
-// 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-// 			patternFns = append(patternFns, createPatternFunc(ln))
-// 			ignoreFns.Add(ln)
-// 		}
-// 	}
-// 	/// ...
-// }
-
+//
+// 
+//
 func createPatternFunc(s string) func(string) bool {
 	if strings.HasPrefix(s, "*") {
 		rx := regexp.MustCompile(fmt.Sprintf(".%s$", regexEscape(s)))
