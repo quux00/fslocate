@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+func TestReadInIgnorePatterns(t *testing.T) {
+	var ignore *ignorePatterns = readInIgnorePatterns()
+
+	fmt.Println("suffixes:", ignore.suffixes)
+	fmt.Println("patterns:", ignore.patterns)
+}
+
 func TestRemoveStarSuffix(t *testing.T) {
 	s1 := ""
 	s2 := "a"

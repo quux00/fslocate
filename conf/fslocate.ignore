@@ -18,4 +18,12 @@
 .npm/
 .java/
 .rvm/
-
+.thumbnails/
+.dvdcss/
+.metadata/
+.plugins/
+/home/midpeter444/lang/java/javadoc-java7/
+/home/midpeter444/apps/springsource/sts-3.1.0.RELEASE/
+apidocs/
+class/
+target/

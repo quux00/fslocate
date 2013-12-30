@@ -41,7 +41,6 @@ import (
 	_ "github.com/bmizerany/pq"
 	"io/ioutil"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -74,14 +73,19 @@ type dbReply struct {
 	err       error
 }
 
+type ignorePatterns struct {
+	suffixes []string
+	patterns []string
+}
+
 // the tools needed by the indexer to do its job
 type indexerMateriel struct {
-	idxNum    int
-	ignoreFns []func(string) bool
-	dirChan   chan []fsentry.E
-	dbChan    chan dbTask
-	doneChan  chan int
-	replyChan chan dbReply
+	idxNum         int
+	ignorePatterns *ignorePatterns
+	dirChan        chan []fsentry.E
+	dbChan         chan dbTask
+	doneChan       chan int
+	replyChan      chan dbReply
 }
 
 /* ---[ FUNCTIONS ]--- */
@@ -93,11 +97,11 @@ func Index(numIndexers int) {
 
 	var (
 		err       error
-		ignoreFns []func(string) bool
+		patStruct *ignorePatterns
 		db        *sql.DB // safe for concurrent use by multiple goroutines
 	)
 
-	ignoreFns = readInIgnorePatterns()
+	patStruct = readInIgnorePatterns()
 
 	// have the db conx global allows multiple dbHandler routines to share it if necessary
 	db, err = initDb()
@@ -107,9 +111,9 @@ func Index(numIndexers int) {
 	}
 	defer db.Close()
 
-	dbChan := make(chan dbTask, 32)         // to send requests to the DbHandler
-	dirChan := make(chan []fsentry.E, 8192) // to enqueue new dirs to search (shared by indexers)
-	doneChan := make(chan int)              // for indexers to signal 'done' to main thread
+	dbChan := make(chan dbTask, 4096)        // to send requests to the DbHandler
+	dirChan := make(chan []fsentry.E, 10000) // to enqueue new dirs to search (shared by indexers)
+	doneChan := make(chan int)               // for indexers to signal 'done' to main thread
 
 	// launch a single dbHandler goroutine
 	go dbHandler(db, dbChan)
@@ -128,10 +132,10 @@ func Index(numIndexers int) {
 
 	for i := 0; i < nindexers; i++ {
 		materiel := &indexerMateriel{idxNum: i,
-			ignoreFns: ignoreFns,
-			dirChan:   dirChan,
-			dbChan:    dbChan,
-			doneChan:  doneChan,
+			ignorePatterns: patStruct,
+			dirChan:        dirChan,
+			dbChan:         dbChan,
+			doneChan:       doneChan,
 		}
 		go indexer(materiel)
 	}
@@ -169,7 +173,7 @@ func initDb() (*sql.DB, error) {
 func indexer(mt *indexerMateriel) {
 	var nextEntries []fsentry.E
 	misses := 0 // num times have read from dirChan and "missed" (timed out)
-	// when miss twice in a row, then send q done note on the doneChan and exit
+	//             when miss twice in a row, then send q done note on the doneChan and exit
 	mt.replyChan = make(chan dbReply, 16)
 	maxMisses := 2
 
@@ -189,7 +193,7 @@ func indexer(mt *indexerMateriel) {
 		default:
 			misses++
 			if misses < maxMisses {
-				time.Sleep(250 * time.Millisecond)
+				time.Sleep(300 * time.Millisecond)
 			}
 		}
 	}
@@ -205,8 +209,8 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 	prf("QUERY sent to dbHandler for: %v\n", direntry)
 	mt.dbChan <- dbTask{QUERY, direntry, mt.replyChan}
 
-	var fsentries []fsentry.E
-	fsentries, err := scanDir(direntry, mt.ignoreFns)
+	var allEntries, dirEntries []fsentry.E
+	allEntries, dirEntries, err := scanDir(direntry, mt.ignorePatterns)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to fully read entries in dir %v: %v\n", direntry.Path, err)
 		return err
@@ -219,16 +223,9 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 		fmt.Fprintf(os.Stderr, "Error while reading from the database: %v\n", err)
 		return reply.err
 	}
-	dbrecsSet := fsentry.NewSet(reply.fsentries...)
-	fsrecsSet := fsentry.NewSet(fsentries...)
 
-	fsonly := fsrecsSet.Difference(dbrecsSet)
-	dbonly := dbrecsSet.Difference(fsrecsSet)
-
-	prf("dbrecSets: %v\n", dbrecsSet)
-	prf("fsrecSets: %v\n", fsrecsSet)
-	prf("dbonly: %v\n", dbonly)
-	prf("fsonly: %v\n", fsonly)
+	fsonly, dbonly := diffDbAndFsRecords(reply.fsentries, allEntries)
+	prf("dbonly: %v\nfsonly: %v\n", dbonly, fsonly)
 
 	N := len(fsonly) + len(dbonly)
 	tmpReplyChan := make(chan dbReply, N)
@@ -236,17 +233,14 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 		mt.dbChan <- dbTask{DELETE, entry, tmpReplyChan}
 	}
 
-	var dirEntries []fsentry.E
 	for entry, _ := range fsonly {
 		mt.dbChan <- dbTask{INSERT, entry, tmpReplyChan}
+	}
 
-		if entry.Typ == fsentry.DIR && entry.Path != direntry.Path {
-			dirEntries = append(dirEntries, entry)
-		}
-		err = putOnDirChan(dirEntries, mt.dirChan)
-		if err != nil {
-			panic(err)  // TODO: shutdown gracefully
-		}
+	// put dirs onto the dirChan for further indexing
+	err = putOnDirChan(dirEntries, mt.dirChan)
+	if err != nil {
+		panic(err) // TODO: shutdown gracefully
 	}
 
 	// now check the Db Replies for any errors
@@ -254,7 +248,17 @@ func indexEntry(direntry fsentry.E, mt *indexerMateriel) error {
 	if err != nil {
 		panic(err)
 	}
+
 	return nil
+}
+
+func diffDbAndFsRecords(fsentriesFromDb, fsentriesFromFs []fsentry.E) (fsonly, dbonly fsentry.Set) {
+	dbrecsSet := fsentry.NewSet(fsentriesFromDb...)
+	fsrecsSet := fsentry.NewSet(fsentriesFromFs...)
+
+	fsonly = fsrecsSet.Difference(dbrecsSet)
+	dbonly = dbrecsSet.Difference(fsrecsSet)
+	return fsonly, dbonly
 }
 
 func checkErrorsOnDbReplies(replyChan chan dbReply, numExp int) error {
@@ -289,10 +293,12 @@ func putOnDirChan(dirEntries []fsentry.E, dirChan chan []fsentry.E) error {
 //
 // direntry should be a fsentry.E with Typ = DIR
 //
-func scanDir(direntry fsentry.E, ignoreFns []func(string) bool) (entries []fsentry.E, err error) {
+func scanDir(direntry fsentry.E, ignore *ignorePatterns) (allEntries, dirEntries []fsentry.E, err error) {
 	var lsFileInfo []os.FileInfo
-	entries = make([]fsentry.E, 1, 4)
-	entries[0] = direntry
+	// put the current dir on all entries so that it can be compared to all the entries in the db
+	allEntries = make([]fsentry.E, 1, 4)
+	allEntries[0] = direntry
+	// but do not put the currdir on the dirEntries, since that will go onto dirChan and create an infinite loop
 
 	prf("Scanning %v for files\n", direntry.Path)
 	lsFileInfo, err = ioutil.ReadDir(direntry.Path)
@@ -302,16 +308,17 @@ func scanDir(direntry fsentry.E, ignoreFns []func(string) bool) (entries []fsent
 
 	for _, finfo := range lsFileInfo {
 		abspath := direntry.Path + "/" + finfo.Name()
-		if shouldIgnore(ignoreFns, abspath) {
+		if shouldIgnore(ignore, abspath) {
 			continue
 		}
-		enttyp := fsentry.FILE
+		currEntry := fsentry.E{Path: abspath, Typ: fsentry.FILE}
 		if finfo.IsDir() {
-			enttyp = fsentry.DIR
+			currEntry.Typ = fsentry.DIR
+			dirEntries = append(dirEntries, currEntry)
 		}
-		entries = append(entries, fsentry.E{Path: abspath, Typ: enttyp})
+		allEntries = append(allEntries, currEntry)
 	}
-	return entries, nil
+	return allEntries, dirEntries, nil
 }
 
 //
@@ -319,9 +326,18 @@ func scanDir(direntry fsentry.E, ignoreFns []func(string) bool) (entries []fsent
 // not be indexed. The full path (abspath) is checked as a pure string match first.
 // If that is not found in the ignore patterns, then a regex based search is done (??)
 //
-func shouldIgnore(ignoreFns []func(string) bool, abspath string) bool {
-	for _, fn := range ignoreFns {
-		if fn(abspath) {
+func shouldIgnore(ignore *ignorePatterns, abspath string) bool {
+	if ignore == nil {
+		return false
+	}
+	for _, suffix := range ignore.suffixes {
+		if strings.HasSuffix(abspath, suffix) {
+			return true
+		}
+	}
+
+	for _, pat := range ignore.patterns {
+		if strings.Contains(abspath, pat) {
 			return true
 		}
 	}
@@ -349,7 +365,7 @@ func dbDelete(delOneStmt, delChildrenStmt *sql.Stmt, entry fsentry.E) error {
 
 	// if deleting a DIR, must also delete all its children => use wildcard
 	if entry.Typ == fsentry.DIR {
-		prf("Deleting: %v/% (children of deleted dir)\n", entry.Path)
+		prf("Deleting: %v/%% (children of deleted dir)\n", entry.Path)
 		res, err = delChildrenStmt.Exec(entry.Path + "/%")
 		if err != nil {
 			return err
@@ -519,23 +535,55 @@ func fileExists(fpath string) bool {
 	return err == nil
 }
 
+// func readInIgnorePatterns() (ignoreFns []func(string) bool) {
+// 	ignoreFilePath := IGNORE_FILE
+
+// 	if !fileExists(ignoreFilePath) {
+// 		fmt.Fprintf(os.Stderr,
+// 			"WARN: Unable to find ignore patterns file: %v\n", ignoreFilePath)
+// 		return ignoreFns
+// 	}
+
+// 	file, err := os.Open(ignoreFilePath)
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", ignoreFilePath)
+// 		return ignoreFns
+// 	}
+// 	defer file.Close()
+
+// 	scanner := bufio.NewScanner(file)
+// 	for scanner.Scan() {
+// 		ln := strings.TrimSpace(scanner.Text())
+// 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
+// 			ignoreFns = append(ignoreFns, createPatternFunc(ln))
+// 		}
+// 	}
+
+// 	if err = scanner.Err(); err != nil {
+// 		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", ignoreFilePath, err)
+// 	}
+// 	return ignoreFns
+// }
+
 //
 // Reads in the ingore patterns from IGNORE_FILE
-// and returns the entries as a stringset.Set
+// and returns the entries as an ignorePatterns struct
 //
-func readInIgnorePatterns() (ignoreFns []func(string) bool) {
+func readInIgnorePatterns() *ignorePatterns {
 	ignoreFilePath := IGNORE_FILE
+
+	var suffixes, patterns []string
 
 	if !fileExists(ignoreFilePath) {
 		fmt.Fprintf(os.Stderr,
 			"WARN: Unable to find ignore patterns file: %v\n", ignoreFilePath)
-		return ignoreFns
+		return nil
 	}
 
 	file, err := os.Open(ignoreFilePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", ignoreFilePath)
-		return ignoreFns
+		return nil
 	}
 	defer file.Close()
 
@@ -543,38 +591,59 @@ func readInIgnorePatterns() (ignoreFns []func(string) bool) {
 	for scanner.Scan() {
 		ln := strings.TrimSpace(scanner.Text())
 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-			ignoreFns = append(ignoreFns, createPatternFunc(ln))
+			suffixes, patterns = categorizeIgnorePattern(suffixes, patterns, ln)
 		}
 	}
 
 	if err = scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", ignoreFilePath, err)
 	}
-	return ignoreFns
+	return &ignorePatterns{suffixes: suffixes, patterns: patterns}
+}
+
+func categorizeIgnorePattern(suffixes, patterns []string, token string) ([]string, []string) {
+	tok := token
+	if strings.HasPrefix(tok, "*") {
+		tok = tok[1:]
+		suffixes = append(suffixes, tok)
+	} else if strings.HasSuffix(tok, "/") {
+		suffixes = append(suffixes, ensurePrefix(tok[:len(tok)-1], "/"))
+		patterns = append(patterns, ensurePrefix(tok, "/"))
+	} else {
+		patterns = append(patterns, ensurePrefix(tok, "/"))
+	}
+	return suffixes, patterns
+}
+
+func ensurePrefix(s string, prefix string) string {
+	if strings.HasPrefix(s, prefix) {
+		return s
+	}
+	return prefix + s
 }
 
 //
-// 
 //
-func createPatternFunc(s string) func(string) bool {
-	if strings.HasPrefix(s, "*") {
-		rx := regexp.MustCompile(fmt.Sprintf(".%s$", regexEscape(s)))
-		return func(path string) bool {
-			return rx.MatchString(path)
-		}
-	}
-	if strings.HasSuffix(s, "/") || strings.HasSuffix(s, "/*") {
-		dirname := strings.TrimSuffix(strings.TrimSuffix(s, "*"), "/")
-		rx := regexp.MustCompile(fmt.Sprintf("%s/.*", regexEscape(removeStarSuffix(s))))
-		return func(path string) bool {
-			return strings.HasSuffix(path, dirname) || rx.MatchString(path)
-		}
-	}
-	rx := regexp.MustCompile(regexEscape(s))
-	return func(path string) bool {
-		return rx.MatchString(path)
-	}
-}
+//
+// func createPatternFunc(s string) func(string) bool {
+// 	if strings.HasPrefix(s, "*") {
+// 		rx := regexp.MustCompile(fmt.Sprintf(".%s$", regexEscape(s)))
+// 		return func(path string) bool {
+// 			return rx.MatchString(path)
+// 		}
+// 	}
+// 	if strings.HasSuffix(s, "/") || strings.HasSuffix(s, "/*") {
+// 		dirname := strings.TrimSuffix(strings.TrimSuffix(s, "*"), "/")
+// 		rx := regexp.MustCompile(fmt.Sprintf("%s/.*", regexEscape(removeStarSuffix(s))))
+// 		return func(path string) bool {
+// 			return strings.HasSuffix(path, dirname) || rx.MatchString(path)
+// 		}
+// 	}
+// 	rx := regexp.MustCompile(regexEscape(s))
+// 	return func(path string) bool {
+// 		return rx.MatchString(path)
+// 	}
+// }
 
 func removeStarSuffix(s string) string {
 	if strings.HasSuffix(s, "*") {
