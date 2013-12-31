@@ -149,7 +149,7 @@ func pathsToDeleteInDb(confIndexDirs, dbIndexDirs []string) []string {
 	delPaths := make([]string, 0, 1)
 
 	for dbdir := range inDbOnlySet {
-		delPaths = append(delPaths, dbdir+"%")
+		delPaths = append(delPaths, dbdir)
 	}
 
 	return delPaths

@@ -15,3 +15,4 @@ pom.xml.asc
 /go-client/src/fslocate-client/fslocate-client
 old
 fslocate
+*.out

@@ -112,7 +112,7 @@ func TestPathsToDeleteInDbDbDirIsChildOfConfigDir(t *testing.T) {
 		t.Errorf("len: %v", len(deleteDirs))
 	}
 	// topleveDirs[0] will NOT have a % attached
-	expectedDelSet := stringset.New(toplevelDirs[0]+"%", toplevelDirs[2]+"%")
+	expectedDelSet := stringset.New(toplevelDirs[0], toplevelDirs[2])
 	actualDelSet := stringset.New(deleteDirs...)
 
 	diffSet := expectedDelSet.Difference(actualDelSet)
@@ -130,7 +130,7 @@ func TestPathsToDeleteInDbConfigDirIsChildOfDbDir(t *testing.T) {
 	if len(deleteDirs) != 2 {
 		t.Errorf("len: %v", len(deleteDirs))
 	}
-	expectedDelSet := stringset.New(toplevelDirs[0]+"%", toplevelDirs[2]+"%")
+	expectedDelSet := stringset.New(toplevelDirs[0], toplevelDirs[2])
 	actualDelSet := stringset.New(deleteDirs...)
 
 	diffSet := expectedDelSet.Difference(actualDelSet)
@@ -148,7 +148,7 @@ func TestPathsToDeleteInDbUnrelatedDirs(t *testing.T) {
 		t.Errorf("len: %v", len(deleteDirs))
 	}
 
-	expectedDelSet := stringset.New(toplevelDirs[0]+"%", toplevelDirs[2]+"%")
+	expectedDelSet := stringset.New(toplevelDirs[0], toplevelDirs[2])
 	actualDelSet := stringset.New(deleteDirs...)
 
 	diffSet := expectedDelSet.Difference(actualDelSet)
