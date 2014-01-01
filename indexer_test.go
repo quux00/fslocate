@@ -11,13 +11,6 @@ import (
 	"time"
 )
 
-func TestReadInIgnorePatterns(t *testing.T) {
-	var ignore *ignorePatterns = readInIgnorePatterns()
-
-	fmt.Println("suffixes:", ignore.suffixes)
-	fmt.Println("patterns:", ignore.patterns)
-}
-
 func TestRemoveStarSuffix(t *testing.T) {
 	s1 := ""
 	s2 := "a"
@@ -138,6 +131,19 @@ func TestIndexerShouldMessageDoneAndShutDownIfNothingOnDirChan(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("indexer go routine did not respond with 'Done' in alloted time")
+	}
+}
+
+func TestReadDatabaseProps(t *testing.T) {
+	uname, passw, err := readDatabaseProperties()
+	if err != nil {
+		t.Errorf(fmt.Sprintf("%v", err))
+	}
+	if len(uname) == 0 {
+		t.Errorf("uname is empty")
+	}
+	if len(passw) == 0 {
+		t.Errorf("passw is empty")
 	}
 }
 

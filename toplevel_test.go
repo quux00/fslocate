@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"fslocate/fsentry"
 	"fslocate/stringset"
 	_ "github.com/bmizerany/pq"
@@ -186,7 +187,12 @@ func TestTopLevelDirsInDb(t *testing.T) {
 /* ---[ Helper fns ]--- */
 
 func initTestDb() *sql.DB {
-	db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=testfslocate sslmode=disable")
+	uname, passw, err := readDatabaseProperties()
+	if err != nil {
+		panic(err)
+	}
+	
+	db, err := sql.Open("postgres", fmt.Sprintf("user=%s password=%s dbname=testfslocate sslmode=disable", uname, passw))
 	if err != nil {
 		panic(err)
 	}

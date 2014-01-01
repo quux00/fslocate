@@ -47,6 +47,12 @@ import (
 
 var nindexers int
 
+// channel buffer sizes
+const (
+	DIRCHAN_BUFSZ = 10000
+	DBCHAN_BUFSZ  = 4096
+)
+
 // constant message types to the dbHandler
 const (
 	INSERT = iota
@@ -56,7 +62,8 @@ const (
 )
 
 const (
-	CONFIG_FILE = "conf/fslocate.indexlist"
+	CONFIG_FILE = "conf/fslocate.conf"
+	INDEX_FILE  = "conf/fslocate.indexlist"
 	IGNORE_FILE = "conf/fslocate.ignore"
 )
 
@@ -111,9 +118,9 @@ func Index(numIndexers int) {
 	}
 	defer db.Close()
 
-	dbChan := make(chan dbTask, 4096)        // to send requests to the DbHandler
-	dirChan := make(chan []fsentry.E, 10000) // to enqueue new dirs to search (shared by indexers)
-	doneChan := make(chan int)               // for indexers to signal 'done' to main thread
+	dbChan := make(chan dbTask, DBCHAN_BUFSZ)        // to send requests to the DbHandler
+	dirChan := make(chan []fsentry.E, DIRCHAN_BUFSZ) // to enqueue new dirs to search (shared by indexers)
+	doneChan := make(chan int)                       // for indexers to signal 'done' to main thread
 
 	// launch a single dbHandler goroutine
 	go dbHandler(db, dbChan)
@@ -122,7 +129,7 @@ func Index(numIndexers int) {
 
 	// these require special handling in terms of what to delete from the db
 	// when this returns there will be some number of directories on the dirChan
-	err = syncTopLevelEntries(db, TopLevelInfo{dirChan, dbChan, CONFIG_FILE})
+	err = syncTopLevelEntries(db, TopLevelInfo{dirChan, dbChan, INDEX_FILE})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return
@@ -163,8 +170,37 @@ func Index(numIndexers int) {
 }
 
 func initDb() (*sql.DB, error) {
-	return sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
+	uname, passw, err := readDatabaseProperties()
+	if err != nil {
+		return nil, err
+	}
+	return sql.Open("postgres", fmt.Sprintf("user=%s password=%s dbname=fslocate sslmode=disable", uname, passw))
 }
+
+//
+// Read in the properties from the CONFIG_FILE file
+// Returns error if CONFIG_FILE cannot be found
+//
+func readDatabaseProperties() (uname, passw string, err error) {
+	propsStr, err := ioutil.ReadFile(CONFIG_FILE)
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(string(propsStr), "\n") {
+		prop := strings.Split(line, "=")
+		if len(prop) == 2 {
+			switch strings.TrimSpace(prop[0]) {
+			case "username":
+				uname = strings.TrimSpace(prop[1])
+			case "password":
+				passw = strings.TrimSpace(prop[1])
+			}
+		}
+	}
+	return
+}
+
 
 //
 // indexer runs in its own goroutine
@@ -534,36 +570,6 @@ func fileExists(fpath string) bool {
 	_, err := os.Stat(fpath)
 	return err == nil
 }
-
-// func readInIgnorePatterns() (ignoreFns []func(string) bool) {
-// 	ignoreFilePath := IGNORE_FILE
-
-// 	if !fileExists(ignoreFilePath) {
-// 		fmt.Fprintf(os.Stderr,
-// 			"WARN: Unable to find ignore patterns file: %v\n", ignoreFilePath)
-// 		return ignoreFns
-// 	}
-
-// 	file, err := os.Open(ignoreFilePath)
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", ignoreFilePath)
-// 		return ignoreFns
-// 	}
-// 	defer file.Close()
-
-// 	scanner := bufio.NewScanner(file)
-// 	for scanner.Scan() {
-// 		ln := strings.TrimSpace(scanner.Text())
-// 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-// 			ignoreFns = append(ignoreFns, createPatternFunc(ln))
-// 		}
-// 	}
-
-// 	if err = scanner.Err(); err != nil {
-// 		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", ignoreFilePath, err)
-// 	}
-// 	return ignoreFns
-// }
 
 //
 // Reads in the ingore patterns from IGNORE_FILE
