@@ -1,3 +1,9 @@
+**[Requirements](#requirements)** |
+**[Usage - Build and Test](#usage1)** |
+**[Usage - Run](#usage2)** |
+**[Status](#status)** |
+**[License](#license)** |
+
 # fslocate
 
 A Go application that indexes files on a filesystem for rapid lookup.  This is a simple replacement for the Unix/Linux locate/updatedb functionality or the old Google Desktop system.  It has been tested on Linux (Xubuntu) and Windows 7.
@@ -7,6 +13,7 @@ It is launched from the command line in order to either index the entries you sp
 The indexer runs until it finishes with a variable number of indexers.  It can be run via a cron or [Windows Task Scheduler](http://www.iopus.com/guides/winscheduler.htm). 
 
 
+<a name="requirements"></a>
 ## Requirements
 
 * Go (tested with 1.1.2)
@@ -17,14 +24,15 @@ The indexer runs until it finishes with a variable number of indexers.  It can b
 
 #### PostgreSQL
 
-You will need to create database called `fslocate` and then create the table and indexes in `db/postgres.ddl`.
+You will need to create a database called `fslocate` and then create the table and indexes in `db/postgres.ddl`.
 
 #### SQLite
 
-The database is stored in db/fslocate.db.  You will need to create the table and index in `db/sqlite.ddl`.  (Again the code isn't ready to work with SQLite yet.)
+The database is stored in `db/fslocate.db`.  You will need to create the table and index in `db/sqlite.ddl`.  (Again the code isn't ready to work with SQLite yet.)
 
 
-## Usage
+<a name="usage1"></a>
+## Usage - Build and Test
 
 ### configuration
 
@@ -35,7 +43,7 @@ You can also specify patterns, files and directories you do not want indexed.  P
 
 ### build
 
-After you have the fslocate database set up, next install the Go PostgreSQL driver:
+After you have the fslocate database set up, install the Go PostgreSQL driver:
 
     go get github.com/bmizerany/pq
 
@@ -75,12 +83,15 @@ Put a list of dirs and patterns to ignore in fslocate.ignore.  See the note at t
 Put one or more "top level directories" to search.  `fslocate` will not search your whole hard drive by default.  It will only index from the parent directories you specify.
 
 
+
+<a name="usage2"></a>
+## Usage - Run
+
 ### launch the indexer
 
 To view options:
 
-    fslocate -h
-    midpeter444:~/lang/go/projects/src/fslocate$ fslocate -h
+    $ fslocate -h
     Usage: [-hv] [-t NUM] fslocate search-term | -i
       fslocate <search-term>
       fslocate -i  (run the indexer)
@@ -104,7 +115,7 @@ Searching is case insensitive.  You can only search for one term at a time.  If 
 
 Or you can query the PostgreSQL database directly:
 
-    psql fslocate
+    $ psql fslocate
     fslocate=> \d fsentry
                                  Table "public.fsentry"
       Column  |     Type     |                      Modifiers                       
@@ -120,14 +131,17 @@ Or you can query the PostgreSQL database directly:
         "fsentry_path_idx" btree (path)
 
 
+----
 
+<a name="status"></a>
 ## Status
 
-Currently, I haven't tested this on really large filesystems (I currently have about 120,000 entries indexed).  I know one limitation is the channel buffer size of 10,000 will be a limiting factor.  If you run it on some large file system, edit the DIRCHAN_BUFSZ constant to some really big number (currently I have it at 10,000).  On my system with 16GB RAM, fslocate takes about 0.1% of memory while it is indexing, so it very lightlweight. Therefore, increasing this buffer size significantly is no big deal on most modern systems.
+Currently, I haven't tested this on really large filesystems (I currently have about 120,000 entries indexed).  I know one limitation is the `dirChan` channel buffer size of 10,000 (in `indexer.go`) will be a limiting factor.  If you run it on some large file system, edit the DIRCHAN_BUFSZ constant to some really big number.  On my system with 16GB RAM, fslocate takes about 0.1% of memory while it is indexing, so it very lightweight. Thus, increasing this buffer size significantly is no big deal on most modern systems.
 
 Also, there is no way to throttle the code and tell it to go slowly and use less CPU (most PostgreSQL is the one churning away).  That wouldn't be hard to add if people want it.
 
 
+<a name="license"></a>
 ## License
 
 Copyright © 2013 Michael Peterson
