@@ -188,7 +188,9 @@ func getToplevelEntries(nindexers int) []string {
 
 func indexer(entryChan chan string, doneChan chan bool, ignorePats *common.IgnorePatterns, dirpath string) {
 	dirChan := make(chan string, DIRCHAN_BUFSZ)
-	dirChan <- strings.TrimRight(dirpath, PATH_SEP)
+	for _, e := range strings.Split(dirpath, ",") {
+		dirChan <- strings.TrimRight(e, PATH_SEP)
+	}
 
 	var err error
 	numErrors := 0
