@@ -5,6 +5,7 @@ import (
 	. "fmt"
 	"os"
 	"strings"
+	"fslocate/boyer"
 	"fslocate/postgres"
 	"fslocate/sqlite"
 )
@@ -26,9 +27,11 @@ func init() {
 	flag.BoolVar(&doIndexing, "i", false, "index the config dirs (not search)")
 }
 
+//
 // invoke with:
 // fslocate search-term
 // fslocate index
+// 
 func main() {
 	checkArgs()
 	flag.Parse()
@@ -38,7 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fslocate := getImpl("sqlite")
+	fslocate := getImpl("boyer")
 	
 	if doIndexing {
 		fslocate.Index(numIndexers, verbose)
@@ -53,6 +56,8 @@ func getImpl(fstype string) FsLocate {
 		return postgres.PgFsLocate{}
 	case "sqlite":
 		return sqlite.SqliteFsLocate{}
+	case "boyer":
+		return boyer.BoyerFsLocate{}
 	}
 	panic("No matching type for " + fstype)
 	return nil
