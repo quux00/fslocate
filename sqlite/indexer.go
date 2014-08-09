@@ -143,12 +143,14 @@ func streamEntriesIntoDb(entryChan chan string, doneChan chan bool, nindexers in
 	doneCnt := 0
 	timeOutCnt := 0	
 	
-	// turn off auto-commit; begin one large transactionn
+	// turn off auto-commit; begin one large transaction
+	// Note: db.Begin() and tx.Commit() seem NOT to work with the sqlite3 driver
 	_, err := db.Exec("BEGIN")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARN: BEGIN Tx failed %v\n", err)
 		return
 	}
+	
 	
 LOOP:
 	for {
@@ -157,7 +159,7 @@ LOOP:
 			err := insertIntoDb(entry, db)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR inserting into db: %v\n", err)
-				break LOOP
+				return
 			}
 			prf("inserted %s into db\n", entry)
 			
@@ -165,7 +167,7 @@ LOOP:
 			doneCnt++
 			prf("done call received: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 			
-		case <- time.After(300 * time.Millisecond):
+		case <-time.After(300 * time.Millisecond):
 			timeOutCnt++
 			prf("TIMEOUT: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 			if doneCnt >= nindexers {
