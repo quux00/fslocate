@@ -20,13 +20,13 @@ import (
 var verbose bool
 
 const (
-	OUT_FILE    = "db/fslocate.boyer"
-	INDEX_FILE  = "conf/fslocate.indexlist"
-	PATH_SEP    = string(os.PathSeparator)
+	OUT_FILE      = "db/fslocate.boyer"
+	INDEX_FILE    = "conf/fslocate.indexlist"
+	PATH_SEP      = string(os.PathSeparator)
 	DBCHAN_BUFSZ  = 4096
-	DIRCHAN_BUFSZ = 10000	
-	BUFSZ       = 2097152 // 2MiB "boyer-db" cache before flush to disk
-	RECORD_SEP  = 0x1e    // "Record Separator" char in ASCII
+	DIRCHAN_BUFSZ = 10000
+	BUFSZ         = 2097152 // 2MiB "boyer-db" cache before flush to disk
+	RECORD_SEP    = 0x1e    // "Record Separator" char in ASCII
 )
 
 type MBoyerFsLocate struct{}
@@ -48,7 +48,7 @@ func (_ MBoyerFsLocate) Index(numIndexers int, beVerbose bool) {
 
 	/* ---[ launch indexers ]--- */
 	entryChan := make(chan string, DBCHAN_BUFSZ)
-	doneChan  := make(chan bool, nindexers)
+	doneChan := make(chan bool, nindexers)
 
 	var patterns *common.IgnorePatterns = common.ReadInIgnorePatterns()
 
@@ -61,12 +61,8 @@ func (_ MBoyerFsLocate) Index(numIndexers int, beVerbose bool) {
 		prf("Indexing top level entries: %s\n", entry)
 		go indexer(entryChan, doneChan, patterns, entry)
 	}
-
 	prn("indexers launched")
 
-
-	/* ---[ OLD SCHOOL ]--- */
-	
 	streamEntriesIntoDb(entryChan, doneChan, nindexers, file)
 
 	file.Close()
@@ -81,7 +77,7 @@ func (_ MBoyerFsLocate) Index(numIndexers int, beVerbose bool) {
 func streamEntriesIntoDb(entryChan chan string, doneChan chan bool, nindexers int, file *os.File) {
 	doneCnt := 0
 	timeOutCnt := 0
-		
+
 	var buf bytes.Buffer
 
 LOOP:
@@ -146,12 +142,11 @@ func padToLimit(buf *bytes.Buffer) {
 }
 
 func flushBuffer(buf *bytes.Buffer, file *os.File) error {
-	_, err := file.WriteString(buf.String()) // TODO: write buf.Bytes instead?  more performant?
+	_, err := file.Write(buf.Bytes())	
 	file.Sync()
 	buf.Reset()
 	return err
 }
-
 
 func getToplevelEntries(nindexers int) []string {
 	if !common.FileExists(INDEX_FILE) {
@@ -191,7 +186,6 @@ func getToplevelEntries(nindexers int) []string {
 	return dirList
 }
 
-
 func indexer(entryChan chan string, doneChan chan bool, ignorePats *common.IgnorePatterns, dirpath string) {
 	dirChan := make(chan string, DIRCHAN_BUFSZ)
 	dirChan <- strings.TrimRight(dirpath, PATH_SEP)
@@ -228,8 +222,6 @@ func indexer(entryChan chan string, doneChan chan bool, ignorePats *common.Ignor
 	}
 	doneChan <- true
 }
-
-
 
 func pr(s string) {
 	if verbose {

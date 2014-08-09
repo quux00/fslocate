@@ -118,7 +118,7 @@ func padToLimit(buf *bytes.Buffer) {
 }
 
 func flushBuffer(buf *bytes.Buffer, file *os.File) error {
-	_, err := file.WriteString(buf.String()) // TODO: write buf.Bytes instead?  more performant?
+	_, err := file.Write(buf.Bytes())
 	file.Sync()
 	buf.Reset()
 	return err
