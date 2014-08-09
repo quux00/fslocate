@@ -15,6 +15,7 @@ const DEFAULT_NUM_INDEXERS = 3
 var numIndexers int
 var verbose bool
 var doIndexing bool
+var implType string = "boyer"
 
 type FsLocate interface {
 	Search(s string)
@@ -22,9 +23,10 @@ type FsLocate interface {
 }
 
 func init() {
-	flag.IntVar(&numIndexers, "t", DEFAULT_NUM_INDEXERS, "specify num indexers")
+	flag.IntVar(&numIndexers, "n", DEFAULT_NUM_INDEXERS, "specify num indexers")
 	flag.BoolVar(&verbose, "v", false, "verbose")
 	flag.BoolVar(&doIndexing, "i", false, "index the config dirs (not search)")
+	flag.StringVar(&implType, "t", "boyer", "type of fslocate: postgres, sqlite, or boyer")
 }
 
 //
@@ -41,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fslocate := getImpl("boyer")
+	fslocate := getImpl(implType)
 	
 	if doIndexing {
 		fslocate.Index(numIndexers, verbose)

@@ -17,3 +17,4 @@ old
 fslocate
 *.out
 fslocate.boyer
+benchmark*
