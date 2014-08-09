@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"fslocate/boyer"
+	"fslocate/mboyer"
 	"fslocate/postgres"
 	"fslocate/sqlite"
 )
@@ -54,12 +55,14 @@ func main() {
 
 func getImpl(fstype string) FsLocate {
 	switch fstype {
-	case "postgresql":
-		return postgres.PgFsLocate{}
-	case "sqlite":
-		return sqlite.SqliteFsLocate{}
 	case "boyer":
 		return boyer.BoyerFsLocate{}
+	case "mboyer":
+		return mboyer.MBoyerFsLocate{}
+	case "sqlite":
+		return sqlite.SqliteFsLocate{}
+	case "postgresql":
+		return postgres.PgFsLocate{}
 	}
 	panic("No matching type for " + fstype)
 	return nil

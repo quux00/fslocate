@@ -1,0 +1,1 @@
+getToplevelEntries in sqlite and mboyer returns a comma delim list of top level dirs, which is not properly parsed when passed into the indexers
