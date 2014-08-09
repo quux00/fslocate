@@ -30,7 +30,7 @@
 //         main thead to start more indexers for now just log in the issue (in putOnDirChan fn)
 //
 //
-package main
+package postgres
 
 import (
 	"bufio"
@@ -46,6 +46,7 @@ import (
 )
 
 var nindexers int
+var verbose bool
 
 // channel buffer sizes
 const (
@@ -98,7 +99,8 @@ type indexerMateriel struct {
 /* ---[ FUNCTIONS ]--- */
 
 // Index needs to be documented
-func Index(numIndexers int) {
+func (_ PgFsLocate) Index(numIndexers int, beVerbose bool) {
+	verbose = beVerbose
 	nindexers = numIndexers
 	prf("Using %v indexer(s)\n", nindexers)
 
@@ -627,29 +629,6 @@ func ensurePrefix(s string, prefix string) string {
 	}
 	return prefix + s
 }
-
-//
-//
-//
-// func createPatternFunc(s string) func(string) bool {
-// 	if strings.HasPrefix(s, "*") {
-// 		rx := regexp.MustCompile(fmt.Sprintf(".%s$", regexEscape(s)))
-// 		return func(path string) bool {
-// 			return rx.MatchString(path)
-// 		}
-// 	}
-// 	if strings.HasSuffix(s, "/") || strings.HasSuffix(s, "/*") {
-// 		dirname := strings.TrimSuffix(strings.TrimSuffix(s, "*"), "/")
-// 		rx := regexp.MustCompile(fmt.Sprintf("%s/.*", regexEscape(removeStarSuffix(s))))
-// 		return func(path string) bool {
-// 			return strings.HasSuffix(path, dirname) || rx.MatchString(path)
-// 		}
-// 	}
-// 	rx := regexp.MustCompile(regexEscape(s))
-// 	return func(path string) bool {
-// 		return rx.MatchString(path)
-// 	}
-// }
 
 func removeStarSuffix(s string) string {
 	if strings.HasSuffix(s, "*") {

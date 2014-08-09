@@ -1,14 +1,16 @@
-package main
+package sqlite
 
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/bmizerany/pq"
+	_ "github.com/mattn/go-sqlite3"
 	"strings"
 )
 
-func Search(term string) {
-	db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
+type SqliteFsLocate struct {}
+
+func (_ SqliteFsLocate) Search(term string) {
+	db, err := sql.Open("sqlite3", "db/fslocate.db")
 	if err != nil {
 		fmt.Println(err)
 		return

@@ -1,5 +1,8 @@
 CREATE TABLE fsentry(
-  path text NOT NULL UNIQUE 
+  id integer primary key, 
+  path text NOT NULL UNIQUE, 
+  type char,
+  toplevel TINYINT
 );
 
 CREATE INDEX path_idx on fsentry (path);

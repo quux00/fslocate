@@ -5,6 +5,8 @@ import (
 	. "fmt"
 	"os"
 	"strings"
+	"fslocate/postgres"
+	"fslocate/sqlite"
 )
 
 const DEFAULT_NUM_INDEXERS = 3
@@ -12,6 +14,11 @@ const DEFAULT_NUM_INDEXERS = 3
 var numIndexers int
 var verbose bool
 var doIndexing bool
+
+type FsLocate interface {
+	Search(s string)
+	Index(numIndexes int, verbose bool)
+}
 
 func init() {
 	flag.IntVar(&numIndexers, "t", DEFAULT_NUM_INDEXERS, "specify num indexers")
@@ -30,11 +37,25 @@ func main() {
 		Fprintf(os.Stderr, "ERROR: cannot specify -t without the -i (indexing) flag\n")
 		os.Exit(1)
 	}
+
+	fslocate := getImpl("sqlite")
+	
 	if doIndexing {
-		Index(numIndexers)
+		fslocate.Index(numIndexers, verbose)
 	} else {
-		Search(getSearchTerm(os.Args[1:]))
+		fslocate.Search(getSearchTerm(os.Args[1:]))
 	}
+}
+
+func getImpl(fstype string) FsLocate {
+	switch fstype {
+	case "postgresql":
+		return postgres.PgFsLocate{}
+	case "sqlite":
+		return sqlite.SqliteFsLocate{}
+	}
+	panic("No matching type for " + fstype)
+	return nil
 }
 
 func getSearchTerm(args []string) string {
