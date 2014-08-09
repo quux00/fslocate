@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"fslocate/common"
 	"fslocate/fsentry"
 	"fslocate/stringset"
 	"os"
@@ -89,7 +90,7 @@ func readInTopLevelIndexDirs(configFilePath string) ([]string, error) {
 	indexDirsPath := configFilePath
 	var indexDirs []string
 
-	if !fileExists(indexDirsPath) {
+	if !common.FileExists(indexDirsPath) {
 		return indexDirs, fmt.Errorf("Unable to find conf file: %v\n", indexDirsPath)
 	}
 

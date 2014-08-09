@@ -33,10 +33,10 @@
 package postgres
 
 import (
-	"bufio"
 	"bytes"
 	"database/sql"
 	"fmt"
+	"fslocate/common"
 	"fslocate/fsentry"
 	_ "github.com/bmizerany/pq"
 	"io/ioutil"
@@ -65,7 +65,6 @@ const (
 const (
 	CONFIG_FILE = "conf/fslocate.conf"
 	INDEX_FILE  = "conf/fslocate.indexlist"
-	IGNORE_FILE = "conf/fslocate.ignore"
 )
 
 /* ---[ TYPES ]--- */
@@ -81,15 +80,10 @@ type dbReply struct {
 	err       error
 }
 
-type ignorePatterns struct {
-	suffixes []string
-	patterns []string
-}
-
 // the tools needed by the indexer to do its job
 type indexerMateriel struct {
 	idxNum         int
-	ignorePatterns *ignorePatterns
+	ignorePatterns *common.IgnorePatterns
 	dirChan        chan []fsentry.E
 	dbChan         chan dbTask
 	doneChan       chan int
@@ -106,11 +100,11 @@ func (_ PgFsLocate) Index(numIndexers int, beVerbose bool) {
 
 	var (
 		err       error
-		patStruct *ignorePatterns
+		patStruct *common.IgnorePatterns
 		db        *sql.DB // safe for concurrent use by multiple goroutines
 	)
 
-	patStruct = readInIgnorePatterns()
+	patStruct = common.ReadInIgnorePatterns()
 
 	// have the db conx global allows multiple dbHandler routines to share it if necessary
 	db, err = initDb()
@@ -202,7 +196,6 @@ func readDatabaseProperties() (uname, passw string, err error) {
 	}
 	return
 }
-
 
 //
 // indexer runs in its own goroutine
@@ -331,7 +324,7 @@ func putOnDirChan(dirEntries []fsentry.E, dirChan chan []fsentry.E) error {
 //
 // direntry should be a fsentry.E with Typ = DIR
 //
-func scanDir(direntry fsentry.E, ignore *ignorePatterns) (allEntries, dirEntries []fsentry.E, err error) {
+func scanDir(direntry fsentry.E, ignore *common.IgnorePatterns) (allEntries, dirEntries []fsentry.E, err error) {
 	var lsFileInfo []os.FileInfo
 	// put the current dir on all entries so that it can be compared to all the entries in the db
 	allEntries = make([]fsentry.E, 1, 4)
@@ -346,7 +339,7 @@ func scanDir(direntry fsentry.E, ignore *ignorePatterns) (allEntries, dirEntries
 
 	for _, finfo := range lsFileInfo {
 		abspath := direntry.Path + "/" + finfo.Name()
-		if shouldIgnore(ignore, abspath) {
+		if common.ShouldIgnore(ignore, abspath) {
 			continue
 		}
 		currEntry := fsentry.E{Path: abspath, Typ: fsentry.FILE}
@@ -357,29 +350,6 @@ func scanDir(direntry fsentry.E, ignore *ignorePatterns) (allEntries, dirEntries
 		allEntries = append(allEntries, currEntry)
 	}
 	return allEntries, dirEntries, nil
-}
-
-//
-// Uses the ignore patterns to determine if the file/dir passed in should
-// not be indexed. The full path (abspath) is checked as a pure string match first.
-// If that is not found in the ignore patterns, then a regex based search is done (??)
-//
-func shouldIgnore(ignore *ignorePatterns, abspath string) bool {
-	if ignore == nil {
-		return false
-	}
-	for _, suffix := range ignore.suffixes {
-		if strings.HasSuffix(abspath, suffix) {
-			return true
-		}
-	}
-
-	for _, pat := range ignore.patterns {
-		if strings.Contains(abspath, pat) {
-			return true
-		}
-	}
-	return false
 }
 
 //
@@ -566,68 +536,6 @@ MAINLOOP:
 	}
 
 	replyChan <- dbReply{} // send back empty sentinel ack shutdown
-}
-
-func fileExists(fpath string) bool {
-	_, err := os.Stat(fpath)
-	return err == nil
-}
-
-//
-// Reads in the ingore patterns from IGNORE_FILE
-// and returns the entries as an ignorePatterns struct
-//
-func readInIgnorePatterns() *ignorePatterns {
-	ignoreFilePath := IGNORE_FILE
-
-	var suffixes, patterns []string
-
-	if !fileExists(ignoreFilePath) {
-		fmt.Fprintf(os.Stderr,
-			"WARN: Unable to find ignore patterns file: %v\n", ignoreFilePath)
-		return nil
-	}
-
-	file, err := os.Open(ignoreFilePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", ignoreFilePath)
-		return nil
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		ln := strings.TrimSpace(scanner.Text())
-		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-			suffixes, patterns = categorizeIgnorePattern(suffixes, patterns, ln)
-		}
-	}
-
-	if err = scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", ignoreFilePath, err)
-	}
-	return &ignorePatterns{suffixes: suffixes, patterns: patterns}
-}
-
-func categorizeIgnorePattern(suffixes, patterns []string, token string) ([]string, []string) {
-	tok := token
-	if strings.HasPrefix(tok, "*") {
-		tok = tok[1:]
-		suffixes = append(suffixes, tok)
-	} else if strings.HasSuffix(tok, "/") {
-		suffixes = append(suffixes, ensurePrefix(tok[:len(tok)-1], "/"))
-		patterns = append(patterns, ensurePrefix(tok, "/"))
-	} else {
-		patterns = append(patterns, ensurePrefix(tok, "/"))
-	}
-	return suffixes, patterns
-}
-
-func ensurePrefix(s string, prefix string) string {
-	if strings.HasPrefix(s, prefix) {
-		return s
-	}
-	return prefix + s
 }
 
 func removeStarSuffix(s string) string {

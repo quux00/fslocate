@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-type SqliteFsLocate struct {}
+type SqliteFsLocate struct{}
 
 func (_ SqliteFsLocate) Search(term string) {
 	db, err := sql.Open("sqlite3", "db/fslocate.db")

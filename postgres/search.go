@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-type PgFsLocate struct {}
+type PgFsLocate struct{}
 
 func (_ PgFsLocate) Search(term string) {
 	db, err := sql.Open("postgres", "user=midpeter444 password=jiffylube dbname=fslocate sslmode=disable")
