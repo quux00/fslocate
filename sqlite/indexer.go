@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -75,9 +76,10 @@ func (_ SqliteFsLocate) Index(numIndexers int, beVerbose bool) {
 	var patterns *ignorePatterns = readInIgnorePatterns()
 	
 	var toplevelEntries []string = getToplevelEntries(nindexers)
-	// if there are fewer entries than requested indexers then decrease the numbers
-	// of indexers launched
+	// if there are fewer entries than requested indexers then decrease 
+	// the number of indexers launched
 	nindexers = len(toplevelEntries)
+	runtime.GOMAXPROCS(nindexers + 1)  // run in parallel fashion -> indexers and dbwriter in separate threads
 	for _, entry := range toplevelEntries {
 		prf("Indexing top level entries: %s\n", entry)
 		go indexer(entryChan, doneChan, patterns, entry)
@@ -163,15 +165,14 @@ LOOP:
 			doneCnt++
 			prf("done call received: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 			
-		case <- time.After(200 * time.Millisecond):
+		case <- time.After(300 * time.Millisecond):
 			timeOutCnt++
 			prf("TIMEOUT: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 			if doneCnt >= nindexers {
 				break LOOP
 			}
-			if timeOutCnt > 3 {
-				fmt.Fprintln(os.Stderr, "WARN: 3 TIMEOUTS. Indexing probably did not finish properly. Exiting now.")
-				break LOOP
+			if timeOutCnt > 5 {
+				fmt.Fprintln(os.Stderr, "WARN: TIMEOUT.")
 			}
 		}
 	}
