@@ -15,7 +15,7 @@ const DEFAULT_NUM_INDEXERS = 3
 var numIndexers int
 var verbose bool
 var doIndexing bool
-var implType string = "boyer"
+var implType string = "mboyer"
 
 type FsLocate interface {
 	Search(s string)

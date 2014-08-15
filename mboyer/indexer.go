@@ -57,6 +57,7 @@ func (_ MBoyerFsLocate) Index(numIndexers int, beVerbose bool) {
 	// the number of indexers launched
 	nindexers = len(toplevelEntries)
 	runtime.GOMAXPROCS(nindexers + 1) // run in parallel fashion -> indexers and dbwriter in separate threads
+	
 	for _, entry := range toplevelEntries {
 		prf("Indexing top level entries: %s\n", entry)
 		go indexer(entryChan, doneChan, patterns, entry)

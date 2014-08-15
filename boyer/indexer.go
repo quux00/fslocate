@@ -16,7 +16,7 @@ var verbose bool
 const (
 	OUT_FILE    = "db/fslocate.boyer"
 	INDEX_FILE  = "conf/fslocate.indexlist"
-	PATH_SEP    = string(os.PathSeparator)
+	PATH_SEP    = "/"
 	BUFSZ       = 2097152 // 2MiB cache before flush to disk
 	RECORD_SEP  = 0x1e    // "Record Separator" char in ASCII
 )

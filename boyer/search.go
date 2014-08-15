@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 )
 
 func (_ BoyerFsLocate) Search(s string) {
@@ -39,7 +40,7 @@ func (_ BoyerFsLocate) Search(s string) {
 				break
 			}
 			entry, endpos := extractEntry(rb, n)
-			fmt.Println(string(entry))
+			fmt.Println( strings.Replace(string(entry), "\\", "/", -1) )
 			rb = rb[endpos+1:]
 		}
 	}
