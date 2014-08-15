@@ -8,7 +8,6 @@ import (
 	"fslocate/boyer"
 	"fslocate/mboyer"
 	"fslocate/postgres"
-	"fslocate/sqlite"
 )
 
 const DEFAULT_NUM_INDEXERS = 3
@@ -27,7 +26,7 @@ func init() {
 	flag.IntVar(&numIndexers, "n", DEFAULT_NUM_INDEXERS, "specify num indexers")
 	flag.BoolVar(&verbose, "v", false, "verbose")
 	flag.BoolVar(&doIndexing, "i", false, "index the config dirs (not search)")
-	flag.StringVar(&implType, "t", "boyer", "type of fslocate: postgres, sqlite, or boyer")
+	flag.StringVar(&implType, "t", "boyer", "type of fslocate: postgres, or boyer")
 }
 
 //
@@ -59,8 +58,6 @@ func getImpl(fstype string) FsLocate {
 		return boyer.BoyerFsLocate{}
 	case "mboyer":
 		return mboyer.MBoyerFsLocate{}
-	case "sqlite":
-		return sqlite.SqliteFsLocate{}
 	case "postgresql":
 		return postgres.PgFsLocate{}
 	}
