@@ -4,7 +4,6 @@
 # .git/ means ignore all entries in any directory named ".git" (including the .git dir itself) 
 .emacs.dRECENT
 *.class
-!drive_c!
 .git/
 .svn/
 .hg/

@@ -1,17 +1,18 @@
-package main
+package postgres
 
 import (
 	"database/sql"
 	"fmt"
 	"fslocate/fsentry"
 	"fslocate/stringset"
-	_ "github.com/bmizerany/pq"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 	"time"
+
+	_ "github.com/bmizerany/pq"
 )
 
 var (
@@ -191,7 +192,7 @@ func initTestDb() *sql.DB {
 	if err != nil {
 		panic(err)
 	}
-	
+
 	db, err := sql.Open("postgres", fmt.Sprintf("user=%s password=%s dbname=testfslocate sslmode=disable", uname, passw))
 	if err != nil {
 		panic(err)

@@ -6,7 +6,7 @@
 
 # fslocate
 
-A Go application that indexes files on a filesystem for rapid lookup.  This is a simple replacement for the Unix/Linux locate/updatedb functionality or the old Google Desktop system.  It has been tested on Linux (Xubuntu) and Windows 7.
+A Go application that indexes file names (not content) on a filesystem for rapid lookup.  This is a simple replacement for the Unix/Linux locate/updatedb functionality or the old Google Desktop system.  It has been tested on Linux (Xubuntu) and Windows 7.
 
 It is launched from the command line in order to either index the entries you specify (in a config file) or search for indexed paths that have already been indexed.  Unlike locate/updatedb, you use `fslocate` for both commands.  See Usage for details.
 
@@ -16,7 +16,18 @@ The indexer runs until it finishes with a variable number of indexers.  It can b
 <a name="requirements"></a>
 ## Requirements
 
-* Go (tested with 1.1.2)
+* Go (tested with 1.1.2 through 1.4.2)
+
+
+### Implementation (Default) - write to a single text file ("textual") database
+
+This is now the default implementation.  All records are written to a plaintext file with record separators. This is the "boyer" format.
+
+
+### Implementation - relational database backing
+
+The first version of fslocate used PostgreSQL.  That is no longer the default, but it can be used:
+
 * PostgreSQL (tested with 9.1)
   * I use the Blake Mizerany's pure Go PostgreSQL driver: https://github.com/bmizerany/pq
 * fslocate could also be made to work with SQLite 3
@@ -36,14 +47,14 @@ The database is stored in `db/fslocate.db`.  You will need to create the table a
 
 ### configuration
 
-fslocate is designed to only "crawl" the parts of the filesystem you want.  Specify absolute paths to the directories you want indexed in the `conf/fslocate.conf` file in the conf directory.  One (absolute path) directory per line.
+fslocate is designed to only index the parts of the filesystem you want.  Specify absolute paths to the directories you want indexed in the `conf/fslocate.indexlist` file in the conf directory.  One (absolute path) directory per line.
 
 You can also specify patterns, files and directories you do not want indexed.  Put those in the `conf/fslocate.ignore` files.  See the notes at the top of that file for how the patterns are specified.
 
 
 ### build
 
-After you have the fslocate database set up, install the Go PostgreSQL driver:
+After you have the fslocate database set up, if you are using PostgreSQL as the database, install the Go PostgreSQL driver:
 
     go get github.com/bmizerany/pq
 
@@ -61,11 +72,6 @@ Assuming you have $GOROOT and $GOPATH properly set up, cd into the fslocate dire
     go install
 
 
-### test
-
-To run the tests, you'll need to have a PostgreSQL db called `testfslocate` using the same schema in `db/postgres.ddl`
-
-
 ### edit the config files
 
 In the conf dir, there are three files to edit:
@@ -76,16 +82,29 @@ In the conf dir, there are three files to edit:
     ├── fslocate.ignore
     └── fslocate.indexlist
 
-Put your database username and password in fslocate.conf.
+Put one or more "top level directories" to search.  `fslocate` will **not** search your whole hard drive by default.  It will only index from the parent directories you specify.
 
-Put a list of dirs and patterns to ignore in fslocate.ignore.  See the note at the top of that file for details.
+Put a list of dirs and patterns to ignore in `fslocate.ignore`.  See the note at the top of that file for details.
 
-Put one or more "top level directories" to search.  `fslocate` will not search your whole hard drive by default.  It will only index from the parent directories you specify.
-
+Put your database username and password in `fslocate.conf` (only needed if using PostgreSQL as your database).
 
 
 <a name="usage2"></a>
 ## Usage - Run
+
+You need to run `fslocate` from the a directory with the `conf` directory (see above) in the current path.  I recommend creating a shell script like so:
+
+    #!/bin/bash
+    d=`pwd`
+    cd $GOPATH/src/fslocate
+    $GOPATH/bin/fslocate $@
+    cd $d
+
+Call it `fslocate.sh` and create an alias to it:
+
+    alias fslocate=$HOME/bin/fslocate.sh
+
+
 
 ### launch the indexer
 
@@ -95,7 +114,8 @@ To view options:
     Usage: [-hv] [-t NUM] fslocate search-term | -i
       fslocate <search-term>
       fslocate -i  (run the indexer)
-         -t NUM : specify number of indexer threads (default=3)
+         -n NUM : specify number of indexer threads (default=3)
+         -t TYP : specify type of indexing (mboyer is default)
          -v     : verbose mode
          -h     : show help
 
@@ -113,7 +133,7 @@ By default it runs with three indexers (goroutines that scan the filesystem) and
 
 Searching is case insensitive.  You can only search for one term at a time.  If a file name has spaces, put quotes around it.
 
-Or you can query the PostgreSQL database directly:
+Or, if using PostgresSQL, you can query the database directly:
 
     $ psql fslocate
     fslocate=> \d fsentry

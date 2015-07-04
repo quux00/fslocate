@@ -1,6 +1,6 @@
 //
-// mboyer combines the sqlite multi-threaded channel impl with the "boyer-db" storage
-// of the boyer module, which is single threaded
+// mboyer combines the sqlite multi-threaded channel impl with the
+// "boyer-db" storage of the boyer module, which is single threaded
 //
 package mboyer
 
@@ -94,14 +94,15 @@ LOOP:
 			doneCnt++
 			prf("done call received: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 			timeOutCnt++
 			prf("TIMEOUT: count is: %d; break cond met? = %v\n", doneCnt, doneCnt >= nindexers)
 			if doneCnt >= nindexers {
 				break LOOP
 			}
 			if timeOutCnt > 5 {
-				fmt.Fprintln(os.Stderr, "WARN: TIMEOUT.")
+				fmt.Fprintln(os.Stderr, "WARN: TIMEOUT")
+				timeOutCnt = 0
 			}
 		}
 	}
@@ -142,7 +143,7 @@ func padToLimit(buf *bytes.Buffer) {
 }
 
 func flushBuffer(buf *bytes.Buffer, file *os.File) error {
-	_, err := file.Write(buf.Bytes())	
+	_, err := file.Write(buf.Bytes())
 	file.Sync()
 	buf.Reset()
 	return err

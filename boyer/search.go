@@ -1,3 +1,9 @@
+//
+// The original goal of this package was to use a boyer-moore string
+// search through a simple textual database format.  For now I'm
+// just using the bytes.Index function to search through the textual
+// database, since it has been fast enough for the usage scenarios so far.
+//
 package boyer
 
 import (
@@ -19,7 +25,7 @@ func (_ BoyerFsLocate) Search(s string) {
 	needle := []byte(s)
 	var rb []byte
 	b := make([]byte, BUFSZ)
-	
+
 	for {
 		n, err := file.Read(b)
 		if err != nil {
@@ -34,7 +40,7 @@ func (_ BoyerFsLocate) Search(s string) {
 		rb = b[0:n]
 
 		for {
-			n = bytes.Index(rb, needle);
+			n = bytes.Index(rb, needle)
 			if n < 0 {
 				break
 			}
@@ -65,6 +71,6 @@ func extractEntry(b []byte, pos int) ([]byte, int) {
 			break
 		}
 	}
-	
+
 	return b[start:end], end
 }

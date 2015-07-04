@@ -2,6 +2,9 @@ package stringset
 
 import (
 	"fmt"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"sort"
 	"testing"
 )
@@ -10,10 +13,18 @@ func TestNewWithStringSlice(t *testing.T) {
 	sslice := []string{"aa", "bb", "cc"}
 	set := New(sslice...)
 
-	if len(set) != 3 { t.Errorf("len: %v", len(set)) }
-	if ! set.Contains("aa") { t.Errorf("%v", set) }
-	if ! set.Contains("bb") { t.Errorf("%v", set) }
-	if ! set.Contains("cc") { t.Errorf("%v", set) }
+	if len(set) != 3 {
+		t.Errorf("len: %v", len(set))
+	}
+	if !set.Contains("aa") {
+		t.Errorf("%v", set)
+	}
+	if !set.Contains("bb") {
+		t.Errorf("%v", set)
+	}
+	if !set.Contains("cc") {
+		t.Errorf("%v", set)
+	}
 }
 
 func TestAdd(t *testing.T) {
@@ -141,11 +152,15 @@ func TestSetAddAll(t *testing.T) {
 	if len(set1) != len(set3) {
 		t.Errorf("set1: %v; set3: %v", set1, set3)
 	}
-	if fmt.Sprintf("%v\n", set1) != fmt.Sprintf("%v\n", set1) {
-		t.Errorf("set1: %v; set3: %v", set1, set3)
-	}
-}
 
+	slice1 := set1.Slice()
+	slice3 := set3.Slice()
+
+	sort.Strings(slice1)
+	sort.Strings(slice3)
+
+	equals(t, slice1, slice3)
+}
 
 func TestAddAllInSlice(t *testing.T) {
 
@@ -167,10 +182,10 @@ func TestAddAllInSlice(t *testing.T) {
 		t.Errorf("len: %v", len(sslice))
 	}
 
-	if ! sset.Contains("22") {
+	if !sset.Contains("22") {
 		t.Errorf("len: %v", len(sset))
 	}
-	if ! sset.Contains("66") {
+	if !sset.Contains("66") {
 		t.Errorf("len: %v", len(sset))
 	}
 }
@@ -274,30 +289,69 @@ func TestDifference(t *testing.T) {
 	var diffSet Set
 	diffSet = set1.Difference(set2)
 
-	if len(diffSet) != 2 { t.Errorf("len: %v", len(diffSet)) }
-	if   diffSet.Contains("3") { t.Errorf("%v", diffSet) }
-	if ! diffSet.Contains("1") { t.Errorf("%v", diffSet) }
-	if ! diffSet.Contains("2") { t.Errorf("%v", diffSet) }
+	if len(diffSet) != 2 {
+		t.Errorf("len: %v", len(diffSet))
+	}
+	if diffSet.Contains("3") {
+		t.Errorf("%v", diffSet)
+	}
+	if !diffSet.Contains("1") {
+		t.Errorf("%v", diffSet)
+	}
+	if !diffSet.Contains("2") {
+		t.Errorf("%v", diffSet)
+	}
 
 	diffSet = set2.Difference(set1)
-	if len(diffSet) != 3 { t.Errorf("len: %v", len(diffSet)) }
-	if   diffSet.Contains("3") { t.Errorf("%v", diffSet) }
-	if ! diffSet.Contains("21") { t.Errorf("%v", diffSet) }
-	if ! diffSet.Contains("22") { t.Errorf("%v", diffSet) }
-	if ! diffSet.Contains("55") { t.Errorf("%v", diffSet) }
+	if len(diffSet) != 3 {
+		t.Errorf("len: %v", len(diffSet))
+	}
+	if diffSet.Contains("3") {
+		t.Errorf("%v", diffSet)
+	}
+	if !diffSet.Contains("21") {
+		t.Errorf("%v", diffSet)
+	}
+	if !diffSet.Contains("22") {
+		t.Errorf("%v", diffSet)
+	}
+	if !diffSet.Contains("55") {
+		t.Errorf("%v", diffSet)
+	}
 }
-
 
 func TestSlice(t *testing.T) {
 	set := New("21", "22", "3", "4", "55")
 	slc := set.Slice()
 
-	if len(slc) != len(set) { t.Errorf("%v vs. %v", len(slc), len(set)) }
+	if len(slc) != len(set) {
+		t.Errorf("%v vs. %v", len(slc), len(set))
+	}
 
 	sort.Strings(slc)
-	if slc[0] != "21" { t.Errorf("%v", slc) }
-	if slc[1] != "22" { t.Errorf("%v", slc) }
-	if slc[2] != "3" { t.Errorf("%v", slc) }
-	if slc[3] != "4" { t.Errorf("%v", slc) }
-	if slc[4] != "55" { t.Errorf("%v", slc) }
+	if slc[0] != "21" {
+		t.Errorf("%v", slc)
+	}
+	if slc[1] != "22" {
+		t.Errorf("%v", slc)
+	}
+	if slc[2] != "3" {
+		t.Errorf("%v", slc)
+	}
+	if slc[3] != "4" {
+		t.Errorf("%v", slc)
+	}
+	if slc[4] != "55" {
+		t.Errorf("%v", slc)
+	}
+}
+
+// equals fails the test if exp is not equal to act.
+func equals(tb testing.TB, exp, act interface{}) {
+	if !reflect.DeepEqual(exp, act) {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n",
+			filepath.Base(file), line, exp, act)
+		tb.FailNow()
+	}
 }

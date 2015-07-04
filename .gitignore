@@ -18,3 +18,5 @@ fslocate
 *.out
 fslocate.boyer
 benchmark*
+fslocate.prof*
+fslocate.memprof*

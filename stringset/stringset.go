@@ -1,3 +1,6 @@
+//
+// A Set for strings (Set<String>)
+//
 package stringset
 
 import (
@@ -12,11 +15,13 @@ func (set Set) Add(st string) {
 	set[st] = true
 }
 
+//
 // AddAll adds all entries in the second set (sst) to the
 // first set (the called object, 'set')
 // Returns the called object with the newly added entries
 // in order to allow call chaining. It is safe to ignore the
 // return value if desired.
+//
 func (set Set) AddAll(sst Set) Set {
 	for k := range sst {
 		set[k] = true
@@ -43,26 +48,25 @@ func New(args ...string) Set {
 	return sset
 }
 
-
 // Difference creates a new Set containing the strings
 // in set that are not in set2.
 func (set Set) Difference(set2 Set) Set {
 	diffSet := New()
 	for k := range set {
-		if ! set2.Contains(k) {
+		if !set2.Contains(k) {
 			diffSet.Add(k)
 		}
 	}
 	return diffSet
 }
 
-// 
+//
 // IsSubset returns true if the all values in the set passed in as
 // an argument (sst) are in the values of the set the method was
 // called on.
 // Returns true if the set passed in (sst) is the empty set.
 // TODO: can nil be passed in?
-// 
+//
 func (set Set) IsSubset(sst Set) bool {
 	for k := range set {
 		if !sst[k] {
@@ -105,4 +109,3 @@ func (set Set) String() string {
 	buffer.WriteString("]")
 	return buffer.String()
 }
-	
