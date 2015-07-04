@@ -4,18 +4,12 @@ import (
 	"flag"
 	. "fmt"
 	"fslocate/boyer"
-	"fslocate/mboyer"
-	"fslocate/postgres"
-	"fslocate/sqlite"
 	"log"
 	"os"
 	"runtime/pprof"
 	"strings"
 )
 
-const DefaultNumIndexers = 3
-
-var numIndexers int
 var verbose bool
 var doIndexing bool
 var implType string = "boyer"
@@ -31,10 +25,8 @@ type FsLocate interface {
 }
 
 func init() {
-	flag.IntVar(&numIndexers, "n", DefaultNumIndexers, "specify num indexers")
 	flag.BoolVar(&verbose, "v", false, "verbose")
 	flag.BoolVar(&doIndexing, "i", false, "index the config dirs (not search)")
-	flag.StringVar(&implType, "t", "mboyer", "type of fslocate: postgres, sqlite, or boyer")
 	flag.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
 }
 
@@ -51,11 +43,6 @@ func main() {
 	checkArgs()
 	flag.Parse()
 
-	if !doIndexing && numIndexers != DefaultNumIndexers {
-		Fprintf(os.Stderr, "ERROR: cannot specify -t without the -i (indexing) flag\n")
-		os.Exit(1)
-	}
-
 	fslocate := getImpl(implType)
 
 	if cpuprofile != "" {
@@ -68,24 +55,14 @@ func main() {
 	}
 
 	if doIndexing {
-		fslocate.Index(numIndexers, verbose)
+		fslocate.Index(1, verbose)
 	} else {
 		fslocate.Search(getSearchTerm(os.Args[1:]))
 	}
 }
 
 func getImpl(fstype string) FsLocate {
-	switch fstype {
-	case "boyer":
-		return boyer.BoyerFsLocate{}
-	case "mboyer":
-		return mboyer.MBoyerFsLocate{}
-	case "sqlite":
-		return sqlite.SqliteFsLocate{}
-	case "postgresql":
-		return postgres.PgFsLocate{}
-	}
-	panic("No matching type for " + fstype)
+	return boyer.BoyerFsLocate{}
 }
 
 func getSearchTerm(args []string) string {
@@ -120,11 +97,9 @@ func checkArgs() {
 }
 
 func help() {
-	Println("Usage: [-hv] [-t NUM] fslocate search-term | -i")
+	Println("Usage: [-hv] fslocate search-term | -i")
 	Println("  fslocate <search-term>")
 	Println("  fslocate -i  (run the indexer)")
-	Println("     -n NUM : specify number of indexer threads (default=3)")
-	Println("     -t TYP : specify type of indexing ('boyer' is default)")
 	Println("     -v     : verbose mode")
 	Println("     -h     : show help")
 }

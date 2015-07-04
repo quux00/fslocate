@@ -19,28 +19,11 @@ The indexer runs until it finishes with a variable number of indexers.  It can b
 * Go (tested with 1.1.2 through 1.4.2)
 
 
-### Implementation (Default) - write to a single text file ("textual") database
+### Implementation
 
 This is now the default implementation.  All records are written to a plaintext file with record separators. This is the "boyer" format.
 
-
-### Implementation - relational database backing
-
-The first version of fslocate used PostgreSQL.  That is no longer the default, but it can be used:
-
-* PostgreSQL (tested with 9.1)
-  * I use the Blake Mizerany's pure Go PostgreSQL driver: https://github.com/bmizerany/pq
-* fslocate could also be made to work with SQLite 3
-  * I've written the DDL for SQLite and the database code all runs from a single goroutine, so it should be safe to use with SQLite.  The code would have to modified in a few places, a SQLite Go library pulled in and everything recompiled.  If somebody wants that, let me know.
-
-#### PostgreSQL
-
-You will need to create a database called `fslocate` and then create the table and indexes in `db/postgres.ddl`.
-
-#### SQLite
-
-The database is stored in `db/fslocate.db`.  You will need to create the table and index in `db/sqlite.ddl`.  (Again the code isn't ready to work with SQLite yet.)
-
+Versions 0.5 and 1.0 also had code to run this with PostgreSQL.  That code has been removed from this version to simplify it, since the text database file is fast enough for my purposes.  You can get the previous versions from the git history (tags are `v0.5` and `v1.0`).
 
 <a name="usage1"></a>
 ## Usage - Build and Test
@@ -53,10 +36,6 @@ You can also specify patterns, files and directories you do not want indexed.  P
 
 
 ### build
-
-After you have the fslocate database set up, if you are using PostgreSQL as the database, install the Go PostgreSQL driver:
-
-    go get github.com/bmizerany/pq
 
 Then clone this GitHub repo:
 
@@ -78,7 +57,6 @@ In the conf dir, there are three files to edit:
 
     $ tree conf/
     conf/
-    ├── fslocate.conf
     ├── fslocate.ignore
     └── fslocate.indexlist
 
@@ -114,8 +92,6 @@ To view options:
     Usage: [-hv] [-t NUM] fslocate search-term | -i
       fslocate <search-term>
       fslocate -i  (run the indexer)
-         -n NUM : specify number of indexer threads (default=3)
-         -t TYP : specify type of indexing (mboyer is default)
          -v     : verbose mode
          -h     : show help
 
@@ -133,24 +109,6 @@ By default it runs with three indexers (goroutines that scan the filesystem) and
 
 Searching is case insensitive.  You can only search for one term at a time.  If a file name has spaces, put quotes around it.
 
-Or, if using PostgresSQL, you can query the database directly:
-
-    $ psql fslocate
-    fslocate=> \d fsentry
-                                 Table "public.fsentry"
-      Column  |     Type     |                      Modifiers                       
-    ----------+--------------+------------------------------------------------------
-     id       | integer      | not null default nextval('fsentry_id_seq'::regclass)
-     path     | text         | 
-     type     | character(1) | 
-     toplevel | boolean      | 
-    Indexes:
-        "fsentry_pkey" PRIMARY KEY, btree (id)
-        "fsentry_path_key" UNIQUE CONSTRAINT, btree (path)
-        "fsentry_lower_idx" btree (lower(path))
-        "fsentry_path_idx" btree (path)
-
-
 ----
 
 <a name="status"></a>
@@ -158,7 +116,7 @@ Or, if using PostgresSQL, you can query the database directly:
 
 Currently, I haven't tested this on really large filesystems (I currently have about 120,000 entries indexed).  I know one limitation is the `dirChan` channel buffer size of 10,000 (in `indexer.go`) will be a limiting factor.  If you run it on some large file system, edit the DIRCHAN_BUFSZ constant to some really big number.  On my system with 16GB RAM, fslocate takes about 0.1% of memory while it is indexing, so it very lightweight. Thus, increasing this buffer size significantly is no big deal on most modern systems.
 
-Also, there is no way to throttle the code and tell it to go slowly and use less CPU (most PostgreSQL is the one churning away).  That wouldn't be hard to add if people want it.
+Also, there is no way to throttle the code and tell it to go slowly and use less CPU or disk IO.  That wouldn't be hard to add if people want it.
 
 
 <a name="license"></a>

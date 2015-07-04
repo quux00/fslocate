@@ -11,8 +11,7 @@ import (
 	"time"
 )
 
-const IGNORE_FILE = "conf/fslocate.ignore"
-
+const IgnoreFile = "conf/fslocate.ignore"
 
 type IgnorePatterns struct {
 	suffixes []string
@@ -24,20 +23,20 @@ func init() {
 }
 
 //
-// Reads in the ingore patterns from IGNORE_FILE
+// Reads in the ingore patterns from IgnoreFile
 // and returns the entries as an IgnorePatterns struct
 //
 func ReadInIgnorePatterns() *IgnorePatterns {
 	var suffixes, patterns []string
 
-	if !FileExists(IGNORE_FILE) {
-		fmt.Fprintf(os.Stderr, "WARN: Unable to find ignore patterns file: %v\n", IGNORE_FILE)
+	if !FileExists(IgnoreFile) {
+		fmt.Fprintf(os.Stderr, "WARN: Unable to find ignore patterns file: %v\n", IgnoreFile)
 		return nil
 	}
 
-	file, err := os.Open(IGNORE_FILE)
+	file, err := os.Open(IgnoreFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", IGNORE_FILE)
+		fmt.Fprintf(os.Stderr, "WARN: Unable to open file for reading: %v\n", IgnoreFile)
 		return nil
 	}
 	defer file.Close()
@@ -51,7 +50,7 @@ func ReadInIgnorePatterns() *IgnorePatterns {
 	}
 
 	if err = scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", IGNORE_FILE, err)
+		fmt.Fprintf(os.Stderr, "WARN: Error reading in %v: %v\n", IgnoreFile, err)
 	}
 	return &IgnorePatterns{suffixes: suffixes, patterns: patterns}
 }
@@ -79,7 +78,6 @@ func ShouldIgnore(ignore *IgnorePatterns, abspath string) bool {
 	return false
 }
 
-
 func CategorizeIgnorePattern(suffixes, patterns []string, token string) ([]string, []string) {
 	tok := token
 	if strings.HasPrefix(tok, "*") {
@@ -101,19 +99,15 @@ func EnsurePrefix(s string, prefix string) string {
 	return prefix + s
 }
 
-
 func FileExists(fpath string) bool {
 	_, err := os.Stat(fpath)
 	return err == nil
 }
 
-
-
 func RandVal() string {
 	n := rand.Intn(9999999999)
 	return strconv.Itoa(n)
 }
-
 
 func CreateFullPath(dir, fname string) string {
 	var buf bytes.Buffer
