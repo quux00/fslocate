@@ -4,21 +4,22 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"fslocate/common"
 	"io/ioutil"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/quux00/fslocate/common"
 )
 
 var verbose bool
 
 const (
-	OUT_FILE    = "db/fslocate.boyer"
-	INDEX_FILE  = "conf/fslocate.indexlist"
-	PATH_SEP    = string(os.PathSeparator)
-	BUFSZ       = 2097152 // 2MiB cache before flush to disk
-	RECORD_SEP  = 0x1e    // "Record Separator" char in ASCII
+	OUT_FILE   = "db/fslocate.boyer"
+	INDEX_FILE = "conf/fslocate.indexlist"
+	PATH_SEP   = string(os.PathSeparator)
+	BUFSZ      = 2097152 // 2MiB cache before flush to disk
+	RECORD_SEP = 0x1e    // "Record Separator" char in ASCII
 )
 
 type BoyerFsLocate struct{}
@@ -124,7 +125,6 @@ func flushBuffer(buf *bytes.Buffer, file *os.File) error {
 	return err
 }
 
-
 func getToplevelEntries(ch chan string) {
 	if !common.FileExists(INDEX_FILE) {
 		log.Fatal("ERROR: Cannot find file " + INDEX_FILE)
@@ -147,7 +147,6 @@ func getToplevelEntries(ch chan string) {
 		log.Fatalf("ERROR while reading %s: %v\n", INDEX_FILE, err)
 	}
 }
-
 
 func pr(s string) {
 	if verbose {

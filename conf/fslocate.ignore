@@ -1,8 +1,7 @@
 # RULES (to be implemented)
 # *.class means ignore all entires (FILES or DIRS) that *end* in ".class"
 # abc means ignore all entries that have "abc" anywhere in the path
-# .git/ means ignore all entries in any directory named ".git" (including the .git dir itself) 
-.emacs.dRECENT
+# .git/ means ignore all entries in any directory named ".git" (including the .git dir itself)
 *.class
 .git/
 .svn/
@@ -13,25 +12,30 @@
 .visualvm/
 .macromedia/
 .config/
+.dropbox/
+.ICEauthority/
 .adobe/
 .npm/
+.pki/
 .java/
 .rvm/
 .thumbnails/
 .dvdcss/
+.vmware/
+.compiz/
+.kchmviewer/
+.gconf/
 .metadata/
 .plugins/
-/home/midpeter444/lang/java/javadoc-java7/
-/home/midpeter444/apps/springsource/sts-3.1.0.RELEASE/
+.TrueCrypt/
+lost+found
 apidocs/
 class/
 target/
 .watershed/
-.netbeans/
-/home/midpeter444/.SpiderOak/
-/home/midpeter444/.devcenter/
-/home/midpeter444/.lastpass/
-/home/midpeter444/.emacs.d/saves/
-/home/midpeter444/.pan2/
-/home/midpeter444/.liferea_1.8/
-/home/midpeter444/.local/
+/home/quux00/.SpiderOak/
+/home/quux00/.devcenter/
+/home/quux00/.lastpass/
+/home/quux00/.emacs.d/saves/
+/home/quux00/.pan2/
+/home/quux00/.local/

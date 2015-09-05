@@ -3,11 +3,12 @@ package main
 import (
 	"flag"
 	. "fmt"
-	"fslocate/boyer"
 	"log"
 	"os"
 	"runtime/pprof"
 	"strings"
+
+	"github.com/quux00/fslocate/boyer"
 )
 
 var verbose bool
