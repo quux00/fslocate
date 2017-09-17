@@ -66,6 +66,8 @@ Put a list of dirs and patterns to ignore in `fslocate.ignore`.  See the note at
 
 Put your database username and password in `fslocate.conf` (only needed if using PostgreSQL as your database).
 
+## create a db directory
+Create an empty `db` directory (in the fslocate directory; it will be a sibling directory to `conf`). The output of `fslocate -i` will be stored here.
 
 <a name="usage2"></a>
 ## Usage - Run

@@ -38,14 +38,16 @@ func (_ BoyerFsLocate) Index(numIndexes int, beVerbose bool) {
 	defer os.Remove(tmpOut)
 	defer file.Close()
 
-	dirChan := make(chan string, 10000)
-	getToplevelEntries(dirChan)
-	prf("Read in %d top level entries\n", len(dirChan))
+	queue := make([]string, 0, 10000)
+	queue = getTopLevelEntries(queue)
+	prf("Read in %d top level entries\n", len(queue))
 	ignorePats := common.ReadInIgnorePatterns()
 
 	var buf bytes.Buffer
-	for len(dirChan) > 0 {
-		dir := <-dirChan
+	for len(queue) > 0 {
+		// pull off front of queue
+		dir := queue[0]
+		queue = queue[1:]
 		prf("Procesing dir: %s\n", dir)
 		err := writeEntry(&buf, file, dir)
 		if err != nil {
@@ -63,7 +65,7 @@ func (_ BoyerFsLocate) Index(numIndexes int, beVerbose bool) {
 			fullpath := common.CreateFullPath(dir, e.Name())
 			if !common.ShouldIgnore(ignorePats, fullpath) {
 				if e.IsDir() {
-					dirChan <- fullpath
+					queue = append(queue, fullpath)
 				} else {
 					prf("Writing entry: %s\n", fullpath)
 					err := writeEntry(&buf, file, fullpath)
@@ -125,7 +127,7 @@ func flushBuffer(buf *bytes.Buffer, file *os.File) error {
 	return err
 }
 
-func getToplevelEntries(ch chan string) {
+func getTopLevelEntries(queue []string) []string {
 	if !common.FileExists(INDEX_FILE) {
 		log.Fatal("ERROR: Cannot find file " + INDEX_FILE)
 	}
@@ -140,12 +142,13 @@ func getToplevelEntries(ch chan string) {
 	for scnr.Scan() {
 		ln := strings.TrimSpace(scnr.Text())
 		if len(ln) != 0 && !strings.HasPrefix(ln, "#") {
-			ch <- ln
+			queue = append(queue, ln)
 		}
 	}
 	if err = scnr.Err(); err != nil {
 		log.Fatalf("ERROR while reading %s: %v\n", INDEX_FILE, err)
 	}
+	return queue
 }
 
 func pr(s string) {
